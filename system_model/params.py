@@ -24,11 +24,17 @@ def validate_system_params(args):
         "num_ris_groups",
         "sat_max_power",
         "ris_max_power",
+        "satellite_height",
         "uav_height",
         "ris_max_yaw_step_deg",
         "ris_max_pitch_step_deg",
         "carrier_freq",
         "c",
+        "m_rg",
+        "omega_rg",
+        "alpha_rg",
+        "rg_reference_distance_m",
+        "sat_bessel_3db_beamwidth_deg",
         "bandwidth_hz",
         "noise_temperature_k",
         "array_spacing_wavelengths",
@@ -68,6 +74,14 @@ def validate_system_params(args):
         "reward_orientation_weight",
         "infeasible_ris_penalty",
         "ris_angle_gain_exponent",
+        "atmospheric_loss_db",
+        "s2a_atmospheric_loss_db",
+        "s2g_clutter_loss_db",
+        "s2g_fixed_shadowing_loss_db",
+        "s2g_shadowing_std_db",
+        "s2g_building_penetration_loss_db",
+        "h2g_atmospheric_loss_db",
+        "h2g_clutter_loss_db",
         "risk_distance_weight",
         "risk_density_weight",
         "risk_sensing_weight",
@@ -129,6 +143,11 @@ def validate_system_params(args):
     if args.ground_array_rows != 1:
         raise ValueError("ground_array_rows must be 1 for the current single-antenna ground nodes")
 
+    if len(args.sat_bessel_beam_center) != 3:
+        raise ValueError("sat_bessel_beam_center must contain x, y, z coordinates")
+    if args.sat_bessel_3db_beamwidth_deg >= 180.0:
+        raise ValueError("sat_bessel_3db_beamwidth_deg must be smaller than 180 degrees")
+
     if len(args.secrecy_rate_threshold) not in (1, args.num_users):
         raise ValueError("secrecy_rate_threshold must contain 1 or num_users values")
 
@@ -153,6 +172,8 @@ def validate_system_params(args):
     x_min, x_max, y_min, y_max = args.area_bounds
     if x_min >= x_max or y_min >= y_max:
         raise ValueError("area_bounds must be [x_min, x_max, y_min, y_max]")
+    if not x_min <= args.ris_fixed_x <= x_max or not y_min <= args.ris_fixed_y <= y_max:
+        raise ValueError("the fixed RIS horizontal position must lie inside area_bounds")
 
     if args.ris_array_plane != "yz":
         raise ValueError(
@@ -170,6 +191,11 @@ def validate_system_params(args):
         raise ValueError("RIS pitch limits must satisfy -90 <= ris_pitch_min_deg < ris_pitch_max_deg <= 90")
     if not args.ris_pitch_min_deg <= args.ris_initial_pitch_deg <= args.ris_pitch_max_deg:
         raise ValueError("ris_initial_pitch_deg must lie within the configured pitch limits")
+
+    if not math.isclose(args.uav_max_step, 0.0, rel_tol=0.0, abs_tol=1e-12):
+        raise ValueError("uav_max_step must be 0 for the fixed HAPS-RIS geometry")
+    if not math.isclose(args.ris_initial_yaw_deg, 0.0, rel_tol=0.0, abs_tol=1e-12):
+        raise ValueError("ris_initial_yaw_deg must be 0 for the fixed deployment")
 
     risk_weight_sum = (args.risk_distance_weight + args.risk_density_weight + args.risk_sensing_weight)
 
@@ -237,10 +263,18 @@ def get_system_params(argv=None):
     parser.add_argument("--bob_noise_power", type=float, default=None, help="Optional Bob receiver-noise power override in W")
     parser.add_argument("--eve_noise_power", type=float, default=None, help="Optional Eve receiver-noise power override in W")
 
-    parser.add_argument("--uav_height", type=float, default=100.0)
-    parser.add_argument("--uav_max_step", "--ris_max_step", dest="uav_max_step", type=float, default=100.0)
+    parser.add_argument("--satellite_height", type=float, default=500_000.0, help="Fixed satellite altitude in meters")
+    parser.add_argument("--uav_height", type=float, default=10.0, help="Fixed low-altitude RIS height in meters")
+    parser.add_argument("--ris_fixed_x", type=float, default=88.82, help="Fixed RIS x-coordinate in meters")
+    parser.add_argument("--ris_fixed_y", type=float, default=0.0, help="Fixed RIS y-coordinate in meters; custom coordinates require a matching fixed yaw/pitch")
+    parser.add_argument("--uav_max_step", "--ris_max_step", dest="uav_max_step", type=float, default=0.0)
     parser.add_argument("--ris_initial_yaw_deg", type=float, default=0.0)
-    parser.add_argument("--ris_initial_pitch_deg", type=float, default=22.5)
+    parser.add_argument(
+        "--ris_initial_pitch_deg",
+        type=float,
+        default=24.1,
+        help="Fixed RIS pitch in degrees; 24.1 approximately bisects the default satellite and Bob directions",
+    )
     parser.add_argument("--ris_max_yaw_step_deg", type=float, default=10.0)
     parser.add_argument("--ris_max_pitch_step_deg", type=float, default=10.0)
     parser.add_argument("--ris_pitch_min_deg", type=float, default=-60.0)
@@ -254,8 +288,16 @@ def get_system_params(argv=None):
     # ==============================
     # Channel model
     # ==============================
-    parser.add_argument("--carrier_freq", type=float, default=2.0e9, help="Carrier frequency in Hz")
+    parser.add_argument("--carrier_freq", type=float, default=20.0e9, help="Carrier frequency in Hz")
     parser.add_argument("--c", type=float, default=299_792_458.0, help="Speed of light in m/s")
+    parser.add_argument("--rician_factor_sr_db", type=float, default=15.0, help="Satellite-RIS Rician K-factor in dB")
+    parser.add_argument("--m_rg", type=float, default=2.0, help="RIS-ground Nakagami-m shape parameter")
+    parser.add_argument("--omega_rg", "--Omega_rg", dest="omega_rg", type=float, default=1.0, help="RIS-ground Nakagami mean small-scale power")
+    parser.add_argument("--alpha_rg", type=float, default=2.0, help="RIS-ground power path-loss exponent")
+    parser.add_argument("--rg_reference_distance_m", type=float, default=1.0, help="RIS-ground reference distance in meters")
+    parser.add_argument("--use_sat_bessel_pattern", type=int, choices=[0, 1], default=0, help="Apply one normalized fixed satellite Bessel envelope to all satellite links")
+    parser.add_argument("--sat_bessel_3db_beamwidth_deg", type=float, default=9.0, help="Bessel-pattern 3-dB off-axis half-angle in degrees; about 9 degrees is consistent with the default 18 dBi element/terminal gain")
+    parser.add_argument("--sat_bessel_beam_center", type=float, nargs=3, default=[0.0, 0.0, 0.0], metavar=("X", "Y", "Z"), help="World-coordinate target defining the common satellite-pattern boresight")
     parser.add_argument("--use_3d_array_response", type=int, choices=[0, 1], default=1)
     parser.add_argument("--bandwidth_hz", type=float, default=1e6, help="Modeled receiver bandwidth in Hz")
     parser.add_argument("--noise_temperature_k", type=float, default=290.0, help="Reference noise temperature in K")
@@ -268,11 +310,19 @@ def get_system_params(argv=None):
     parser.add_argument('--eta_los', type=float, default=1.0, help='Additional LoS attenuation in dB')
     parser.add_argument('--eta_nlos', type=float, default=20.0, help='Additional NLoS attenuation in dB')
     parser.add_argument('--rician_factor_a2g_db', type=float, default=10.0, help='A2G Rician K-factor in dB')
+    parser.add_argument('--platform_channel_model', type=str, choices=['a2g', 'h2g'], default='h2g', help='Platform-to-ground propagation model')
+    parser.add_argument('--rician_factor_h2g_db', type=float, default=15.0, help='HAPS-ground Rician K-factor in dB')
+    parser.add_argument('--h2g_atmospheric_loss_db', type=float, default=0.0, help='Clear-sky HAPS-ground atmospheric attenuation in dB')
+    parser.add_argument('--h2g_clutter_loss_db', type=float, default=0.0, help='Scenario-specific HAPS-ground terminal clutter loss in dB')
     parser.add_argument('--atmospheric_loss_db', type=float, default=2.0, help='Satellite-ground atmospheric attenuation in dB')
     parser.add_argument('--s2a_atmospheric_loss_db', type=float, default=2.0, help='Satellite-RIS atmospheric attenuation in dB')
-    parser.add_argument('--sat_tx_gain_db', type=float, default=18.0, help='Satellite antenna element gain in dB')
+    parser.add_argument('--s2g_clutter_loss_db', '--bob_local_clutter_loss_db', dest='s2g_clutter_loss_db', type=float, default=16.8, help='Common fixed satellite-ground clutter loss for every ground node in dB')
+    parser.add_argument('--s2g_fixed_shadowing_loss_db', '--bob_local_shadowing_loss_db', dest='s2g_fixed_shadowing_loss_db', type=float, default=4.6, help='Common fixed satellite-ground shadowing realization for every ground node in dB')
+    parser.add_argument('--s2g_shadowing_std_db', type=float, default=0.0, help='Satellite-ground log-normal shadowing standard deviation in dB; use 0 for the clear outdoor baseline')
+    parser.add_argument('--s2g_building_penetration_loss_db', type=float, default=0.0, help='Satellite-ground building penetration loss in dB; use 0 for outdoor users')
+    parser.add_argument('--sat_tx_gain_db', type=float, default=18.0, help='Satellite peak element/terminal gain in dB, excluding digital array gain')
     parser.add_argument('--ground_rx_gain_db', type=float, default=0.0, help='Ground receiver antenna gain in dB')
-    parser.add_argument('--ris_link_gain_db', type=float, default=3.0, help='RIS element antenna gain in dB')
+    parser.add_argument('--ris_link_gain_db', type=float, default=3.0, help='Per-leg RIS element peak gain in dBi, applied once on reception and once on reradiation')
     parser.add_argument('--array_spacing_wavelengths', type=float, default=0.5, help='Antenna spacing normalized by wavelength')
     parser.add_argument('--sat_array_rows', type=int, default=4, help='Number of rows of satellite UPA')
     parser.add_argument('--ris_array_rows', type=int, default=16, help='Number of rows of RIS UPA')
@@ -301,7 +351,7 @@ def get_system_params(argv=None):
     # Environment and reward
     # ==============================
     parser.add_argument("--max_episode_steps", type=int, default=200, help="Maximum number of steps per episode")
-    parser.add_argument("--secrecy_rate_threshold", type=float, nargs="+", default=[0.1], help="Scalar or one threshold per user, bit/s/Hz")
+    parser.add_argument("--secrecy_rate_threshold", type=float, nargs="+", default=[0.0001], help="Scalar or one threshold per user, bit/s/Hz")
     parser.add_argument("--channel_gain_db_min", type=float, default=-180.0, help="Fixed lower bound for channel-gain normalization")
     parser.add_argument("--channel_gain_db_max", type=float, default=-60.0, help="Fixed upper bound for channel-gain normalization")
     parser.add_argument("--sinr_db_min", type=float, default=-30.0, help="Fixed lower bound for SINR normalization")
@@ -310,11 +360,19 @@ def get_system_params(argv=None):
     parser.add_argument("--inr_db_max", type=float, default=60.0, help="Fixed upper bound for jammer-INR normalization")
 
     parser.add_argument("--reward_outage_weight", "--reward_sop_weight", dest="reward_outage_weight", type=float, default=1.0, help="Weight of the one-step secrecy-outage indicator")
-    parser.add_argument("--reward_margin_weight", type=float, default=1.0, help="Weight of the one-step secrecy-rate margin")
+    parser.add_argument(
+        "--reward_margin_weight",
+        type=float,
+        default=0.2,
+        help=(
+            "Weight of the secrecy margin after normalization by the minimum "
+            "secrecy-rate threshold and clipping to [-2, 5]"
+        ),
+    )
     parser.add_argument("--reward_sat_power_weight", type=float, default=0.0, help="Weight of the one-step satellite power")
     parser.add_argument("--reward_ris_power_weight", type=float, default=0.01, help="Weight of the one-step RIS power")
-    parser.add_argument("--reward_move_weight", type=float, default=0.01, help="Weight of the one-step movement")
-    parser.add_argument("--reward_orientation_weight", type=float, default=0.01, help="Weight of the one-step RIS orientation movement")
+    parser.add_argument("--reward_move_weight", type=float, default=0.0, help="Unused for the fixed HAPS-RIS geometry")
+    parser.add_argument("--reward_orientation_weight", type=float, default=0.0, help="Unused for the fixed RIS normal")
     parser.add_argument("--infeasible_ris_penalty", type=float, default=1.0, help="Penalty for infeasible RIS configurations")
 
 
@@ -360,5 +418,8 @@ def get_system_params(argv=None):
     args.ris_max_step = args.uav_max_step
     args.noise_power = args.ris_noise_power
     args.reward_sop_weight = args.reward_outage_weight
+    # Legacy names now alias the common loss applied to every ground node.
+    args.bob_local_clutter_loss_db = args.s2g_clutter_loss_db
+    args.bob_local_shadowing_loss_db = args.s2g_fixed_shadowing_loss_db
 
     return validate_system_params(args)

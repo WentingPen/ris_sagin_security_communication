@@ -19,7 +19,7 @@ def _positions3(value, name, default_height=0.0):
         value = np.c_[value, np.full(len(value), float(default_height))]
     if not np.all(np.isfinite(value)):
         raise ValueError(f"{name} contains non-finite values")
-    return value
+    return value.copy()
 
 
 def _per_user(value, count, name):
@@ -42,6 +42,11 @@ def _action_array(value, shape, name):
     if value.ndim == 1 and value.size == int(np.prod(shape)):
         return value.reshape(shape).copy()
     raise ValueError(f"{name} must have shape {shape} or be a flat array with {int(np.prod(shape))} values")
+
+
+def _watts_to_dbm(power):
+    power = np.asarray(power, dtype=float)
+    return 10.0 * np.log10(np.maximum(power, 1e-300)) + 30.0
 
 
 def  _feature_slices(block_dims, start=0):
@@ -77,11 +82,11 @@ def _assemble_features(blocks, expected_dims, name):
 class SAGIN_ENV(gym.Env):
     metadata = {"render_modes": []}
     ACTION_KEYS = {
-        "uav_move",
-        "ris_orientation_delta",
-        "ris_group_mode",
-        "ris_amplitude_residual",
-        "ris_phase_residual",
+        "sat_beam_real",
+        "sat_beam_imag",
+        "ris_element_mode",
+        "ris_phase_real",
+        "ris_phase_imag",
     }
 
     def __init__(self, params, sat_positions, uav_positions, user_positions):
@@ -90,12 +95,14 @@ class SAGIN_ENV(gym.Env):
         self.num_users = int(params.num_users)
         if self.num_users != 1:
             raise NotImplementedError(
-                "the current MRT plus coherent-RIS base supports num_users=1 only"
+                "the current dual-agent beamforming model supports num_users=1 only"
             )
         sat_positions = _positions3(sat_positions, "sat_positions")
         uav_positions = _positions3(uav_positions, "uav_positions", params.uav_height)
 
         self.user_positions = _positions3(user_positions, "user_positions", params.ground_height)
+        if not np.allclose(sat_positions[:, 2], float(params.satellite_height)):
+            raise ValueError("all satellite positions must use satellite_height")
         if not np.allclose(uav_positions[:, 2], float(params.uav_height)):
             raise ValueError("all UAV positions must use the fixed uav_height")
         if not np.allclose(self.user_positions[:, 2], float(params.ground_height)):
@@ -114,6 +121,18 @@ class SAGIN_ENV(gym.Env):
         self.bounds = np.asarray(params.area_bounds, dtype=float).reshape(-1)
         if self.bounds.size != 4 or self.bounds[0] >= self.bounds[1] or self.bounds[2] >= self.bounds[3]:
             raise ValueError("area_bounds must be [x_min, x_max, y_min, y_max]")
+        expected_center = np.array([
+            0.5 * (self.bounds[0] + self.bounds[1]),
+            0.5 * (self.bounds[2] + self.bounds[3]),
+        ])
+        expected_haps_xy = np.array([
+            float(params.ris_fixed_x),
+            float(params.ris_fixed_y),
+        ])
+        if not np.allclose(sat_positions[0, :2], expected_center):
+            raise ValueError("the satellite must be fixed at the area center")
+        if not np.allclose(uav_positions[0, :2], expected_haps_xy):
+            raise ValueError("the HAPS-RIS must use the configured fixed horizontal position")
         inside_x = (self.bounds[0] <= self.user_positions[:, 0]) & (self.user_positions[:, 0] <= self.bounds[1])
         inside_y = (self.bounds[2] <= self.user_positions[:, 1]) & (self.user_positions[:, 1] <= self.bounds[3])
         if not np.all(inside_x & inside_y):
@@ -123,16 +142,16 @@ class SAGIN_ENV(gym.Env):
             raise ValueError("max_episode_steps must be positive")
         self._seed_sequence = None
         self._ready = False
-        M, U, G, N = int(params.num_sat_antennas), self.num_users, int(params.num_ris_groups), int(params.num_ris_elements)
+        M, U, N = int(params.num_sat_antennas), self.num_users, int(params.num_ris_elements)
         S = int(params.risk_grid_size)
         self.actor_feature_dims = {     #表示actor网络输入每个特征块的维度
             "time": 1,
             "position": 2 * U + 6,
-            "orientation": 4,
             "channel": 4 * U + 2,
-            "ris": G + 3 * N,
+            "instant_csi": 2 * (M * U + N * M + N * U),
+            "ris": 4 * N,
             "beam": 2 * M * U,
-            "feedback": 3 * U + 6,
+            "feedback": 3 * U + 3,
         }
         self.critic_private_feature_dims = {    #表示critic网络输入每个特征块的维度
             "eve_user_metrics": 4 * U,
@@ -151,11 +170,11 @@ class SAGIN_ENV(gym.Env):
         #spaces.box表示连续动作空间，spaces.MultiBinary表示离散动作空间，spaces.Dict表示字典类型的空间
         #表示每个时隙都必须选择全部动作、全部观测，不能只选择部分
         self.action_space = spaces.Dict({
-            "uav_move": spaces.Box(-1.0, 1.0, shape=(2,), dtype=np.float32),
-            "ris_orientation_delta": spaces.Box(-1.0, 1.0, shape=(2,), dtype=np.float32),
-            "ris_group_mode": spaces.MultiBinary(G),
-            "ris_amplitude_residual": spaces.Box(-1.0, 1.0, shape=(G,), dtype=np.float32),
-            "ris_phase_residual": spaces.Box(-1.0, 1.0, shape=(G,), dtype=np.float32),
+            "sat_beam_real": spaces.Box(-1.0, 1.0, shape=(M,), dtype=np.float32),
+            "sat_beam_imag": spaces.Box(-1.0, 1.0, shape=(M,), dtype=np.float32),
+            "ris_element_mode": spaces.MultiBinary(N),
+            "ris_phase_real": spaces.Box(-1.0, 1.0, shape=(N,), dtype=np.float32),
+            "ris_phase_imag": spaces.Box(-1.0, 1.0, shape=(N,), dtype=np.float32),
         })
         risk_nodes_space = spaces.Box(0.0, 1.0, shape=(S * S, 3), dtype=np.float32)
         self.observation_space = spaces.Dict({
@@ -190,11 +209,11 @@ class SAGIN_ENV(gym.Env):
         self.eve_positions = np.vstack((active_position[None, :], passive_positions))
         self._refresh_common_channels()
         self._refresh_legitimate_channels()
-        zero_group = np.zeros(self.uav_ris.num_groups, dtype=float)
-        self._configure_mrt_ris(
-            group_mode=zero_group,
-            amplitude_residual=zero_group,
-            phase_residual=zero_group,
+        self.satellite.set_mrt_beam(self.bobs[0].direct_channel)
+        self.uav_ris.configure_elements(
+            element_mode=np.zeros(self.uav_ris.num_elements, dtype=float),
+            phase_real=np.ones(self.uav_ris.num_elements, dtype=float),
+            phase_imag=np.zeros(self.uav_ris.num_elements, dtype=float),
         )
         self._update_active_eve_transmission()
         self.ris_power = 0.0
@@ -225,6 +244,12 @@ class SAGIN_ENV(gym.Env):
             self.outage_count += int(self.metrics["outage_sample"])
             terminated = False
             truncated = self.step_count >= self.horizon
+            # The action is evaluated on the CSI contained in the current
+            # observation.  Only then is the next slot's CSI sampled.  The
+            # time-limit observation also needs H_(t+1), because PPO
+            # bootstraps transitions truncated by the finite horizon.
+            self._refresh_common_channels()
+            self._refresh_legitimate_channels()
             observation, info = self._get_actor_observation(), self._get_info()
         except Exception:
             self._ready = False
@@ -241,27 +266,32 @@ class SAGIN_ENV(gym.Env):
         extra = set(action).difference(self.ACTION_KEYS)
         if extra:
             raise KeyError(f"action contains unexpected keys: {sorted(extra)}")
-        G = self.uav_ris.num_groups
+        M = self.satellite.num_sat_antennas
+        N = self.uav_ris.num_elements
         validated = {
-            "uav_move": _action_array(action["uav_move"], (2,), "uav_move"),
-            "ris_orientation_delta": _action_array(
-                action["ris_orientation_delta"], (2,), "ris_orientation_delta"
+            "sat_beam_real": _action_array(
+                action["sat_beam_real"], (M,), "sat_beam_real"
             ),
-            "ris_group_mode": _action_array(action["ris_group_mode"], (G,), "ris_group_mode"),
-            "ris_amplitude_residual": _action_array(
-                action["ris_amplitude_residual"], (G,), "ris_amplitude_residual"
+            "sat_beam_imag": _action_array(
+                action["sat_beam_imag"], (M,), "sat_beam_imag"
             ),
-            "ris_phase_residual": _action_array(
-                action["ris_phase_residual"], (G,), "ris_phase_residual"
+            "ris_element_mode": _action_array(
+                action["ris_element_mode"], (N,), "ris_element_mode"
+            ),
+            "ris_phase_real": _action_array(
+                action["ris_phase_real"], (N,), "ris_phase_real"
+            ),
+            "ris_phase_imag": _action_array(
+                action["ris_phase_imag"], (N,), "ris_phase_imag"
             ),
         }
-        if not np.all(np.isin(validated["ris_group_mode"], (0.0, 1.0))):
-            raise ValueError("ris_group_mode must contain only 0 or 1")
+        if not np.all(np.isin(validated["ris_element_mode"], (0.0, 1.0))):
+            raise ValueError("ris_element_mode must contain only 0 or 1")
         for name in (
-            "uav_move",
-            "ris_orientation_delta",
-            "ris_amplitude_residual",
-            "ris_phase_residual",
+            "sat_beam_real",
+            "sat_beam_imag",
+            "ris_phase_real",
+            "ris_phase_imag",
         ):
             if np.any(validated[name] < -1.0) or np.any(validated[name] > 1.0):
                 raise ValueError(f"{name} must lie in [-1, 1]")
@@ -269,14 +299,13 @@ class SAGIN_ENV(gym.Env):
 
     def _apply_action(self, action):
         previous_margin = self.metrics["user_margin"].copy()
-        self.uav_ris.update_position(action["uav_move"])
-        self.uav_ris.update_orientation(action["ris_orientation_delta"])
-        self._refresh_common_channels()
-        self._refresh_legitimate_channels()
-        self._configure_mrt_ris(
-            group_mode=action["ris_group_mode"],
-            amplitude_residual=action["ris_amplitude_residual"],
-            phase_residual=action["ris_phase_residual"],
+        self.satellite.set_beamforming(
+            action["sat_beam_real"], action["sat_beam_imag"]
+        )
+        self.uav_ris.configure_elements(
+            element_mode=action["ris_element_mode"],
+            phase_real=action["ris_phase_real"],
+            phase_imag=action["ris_phase_imag"],
         )
         self._update_active_eve_transmission(previous_margin)
 
@@ -287,11 +316,10 @@ class SAGIN_ENV(gym.Env):
             # One bounded correction: keep this step's fading realization, update
             # only the jammer direction, then project again from the requested RIS.
             self._update_active_eve_transmission(previous_margin)
-            self.uav_ris.configure_ris(
-                group_mode=action["ris_group_mode"],
-                amplitude_residual=action["ris_amplitude_residual"],
-                phase_residual=action["ris_phase_residual"],
-                base_phase=self.ris_base_phase,
+            self.uav_ris.configure_elements(
+                element_mode=action["ris_element_mode"],
+                phase_real=action["ris_phase_real"],
+                phase_imag=action["ris_phase_imag"],
             )
             self.ris_power, self.ris_action_repaired = (
                 self._enforce_current_ris_power(action)
@@ -308,11 +336,10 @@ class SAGIN_ENV(gym.Env):
             )
             repaired = self.uav_ris.last_power_projection_scale < 1.0 - 1e-12
         except RISPowerInfeasibleError:
-            self.uav_ris.configure_ris(
-                group_mode=np.zeros(self.uav_ris.num_groups, dtype=float),
-                amplitude_residual=action["ris_amplitude_residual"],
-                phase_residual=action["ris_phase_residual"],
-                base_phase=self.ris_base_phase,
+            self.uav_ris.configure_elements(
+                element_mode=np.zeros(self.uav_ris.num_elements, dtype=float),
+                phase_real=action["ris_phase_real"],
+                phase_imag=action["ris_phase_imag"],
             )
             power = 0.0
             repaired = True
@@ -330,6 +357,11 @@ class SAGIN_ENV(gym.Env):
             self.uav_ris.position,
             ris_rotation=self.uav_ris.rotation_matrix,
         )
+        for eve in self.passive_eves:
+            eve.sample_ris_channel(
+                self.uav_ris.position,
+                ris_rotation=self.uav_ris.rotation_matrix,
+            )
         # Reciprocal propagation is shared; the RX gain is removed before applying the directional TX gain.
         self.active_tx_to_ris_base_channel = (
             self.active_ris_rx_channel / np.sqrt(self.channel_model.ground_rx_gain)
@@ -342,31 +374,6 @@ class SAGIN_ENV(gym.Env):
                 uav_pos=self.uav_ris.position,
                 ris_rotation=self.uav_ris.rotation_matrix,
             )
-
-    def _compute_ris_base_phase(self):
-        bob = self.bobs[0]
-        beam = self.satellite.W[:, 0]
-        direct_component = bob.direct_channel @ beam
-        incident_on_ris = self.h_sat_ris @ beam
-        cascade_component = bob.ris_channel * incident_on_ris
-        reference_phase = (
-            np.angle(direct_component)
-            if np.abs(direct_component) > 1e-15
-            else 0.0
-        )
-        base_phase = reference_phase - np.angle(cascade_component)
-        base_phase[np.abs(cascade_component) <= 1e-15] = 0.0
-        return (base_phase + np.pi) % (2.0 * np.pi) - np.pi
-
-    def _configure_mrt_ris(self, group_mode, amplitude_residual, phase_residual):
-        self.satellite.set_mrt_beam(self.bobs[0].direct_channel)
-        self.ris_base_phase = self._compute_ris_base_phase()
-        return self.uav_ris.configure_ris(
-            group_mode=group_mode,
-            amplitude_residual=amplitude_residual,
-            phase_residual=phase_residual,
-            base_phase=self.ris_base_phase,
-        )
 
     def _update_active_eve_transmission(self, user_margin=None):
         """选择active Eve的发射方向，以最大化对Bob的干扰，同时惩罚对被动Eve的残余泄漏."""
@@ -397,6 +404,22 @@ class SAGIN_ENV(gym.Env):
             )
             for bob in self.bobs
         ]
+        bob_direct_signal = np.asarray([
+            bob.direct_channel @ self.satellite.W[:, index]
+            for index, bob in enumerate(self.bobs)
+        ])
+        bob_ris_signal = np.asarray([
+            ((bob.ris_channel * ris_coeff) @ self.h_sat_ris)
+            @ self.satellite.W[:, index]
+            for index, bob in enumerate(self.bobs)
+        ])
+        bob_coherent_signal = bob_direct_signal + bob_ris_signal
+        bob_direct_rx_power_dbm = _watts_to_dbm(np.abs(bob_direct_signal) ** 2)
+        bob_ris_rx_power_dbm = _watts_to_dbm(np.abs(bob_ris_signal) ** 2)
+        bob_coherent_rx_power_dbm = _watts_to_dbm(np.abs(bob_coherent_signal) ** 2)
+        bob_ris_to_direct_power_ratio_db = (
+            bob_ris_rx_power_dbm - bob_direct_rx_power_dbm
+        )
         active_channel = self.active_eve.get_eve_eff_channel(
             sat_pos,
             uav_pos,
@@ -411,6 +434,7 @@ class SAGIN_ENV(gym.Env):
                 uav_pos,
                 ris_coeff,
                 self.h_sat_ris,
+                receiver_ris_channel=eve.ris_channel,
                 ris_rotation=rotation,
             )
             for eve in self.passive_eves
@@ -451,6 +475,10 @@ class SAGIN_ENV(gym.Env):
         all_eve_channels = [active_channel, *passive_channels]  #*表示将元素解包单独传入列表中，形成一个新的列表
         return {
             "bob_sinr": bob_sinr,
+            "bob_direct_rx_power_dbm": bob_direct_rx_power_dbm,
+            "bob_ris_rx_power_dbm": bob_ris_rx_power_dbm,
+            "bob_coherent_rx_power_dbm": bob_coherent_rx_power_dbm,
+            "bob_ris_to_direct_power_ratio_db": bob_ris_to_direct_power_ratio_db,
             "bob_jammer_power": bob_jammer,
             "bob_ris_noise_power": bob_ris_noise,
             "bob_jammer_inr": bob_jammer_inr,
@@ -486,9 +514,14 @@ class SAGIN_ENV(gym.Env):
 
     def _get_reward(self):
         m = self.metrics
+        normalized_margin = np.clip(
+            m["system_margin"] / float(np.min(self.threshold)),
+            -2.0,
+            5.0,
+        )
         return float(
             -self.params.reward_outage_weight * float(m["outage_sample"])
-            + self.params.reward_margin_weight * m["system_margin"]
+            + self.params.reward_margin_weight * normalized_margin
             - self.params.reward_sat_power_weight * m["sat_power_ratio"]
             - self.params.reward_ris_power_weight * m["ris_power_ratio"]
             - self.params.reward_move_weight * m["move_ratio"] ** 2
@@ -519,16 +552,11 @@ class SAGIN_ENV(gym.Env):
         normalized_xy = 2.0 * (ground_xy - [x_min, y_min]) / [x_max - x_min, y_max - y_min] - 1.0
         sat_scale = float(self.params.satellite_position_scale)
         position_state = np.r_[np.clip(self.satellite.position / sat_scale, -1.0, 1.0), normalized_xy.ravel(), self.uav_ris.position[2] / self.params.uav_height]
-        orientation_state = np.asarray([
-            np.sin(self.uav_ris.yaw),
-            np.cos(self.uav_ris.yaw),
-            np.sin(self.uav_ris.pitch),
-            np.cos(self.uav_ris.pitch),
-        ])
         channel_state = self._large_scale_channel_state()
+        instant_csi_state = self._instantaneous_csi_state()
         amplitude_scale = max(self.uav_ris.max_amplitude - 1.0, 1e-12)
         ris_state = np.r_[  #np.r_[]表示将多个数组沿着第一个轴进行拼接，形成一个新的数组
-            self.uav_ris.group_mode, (self.uav_ris.amplitude - 1.0) / amplitude_scale,
+            self.uav_ris.element_mode, (self.uav_ris.amplitude - 1.0) / amplitude_scale,
             np.sin(self.uav_ris.phase), np.cos(self.uav_ris.phase)
         ]
         beam_scale = np.sqrt(self.satellite.max_power)
@@ -536,22 +564,44 @@ class SAGIN_ENV(gym.Env):
         feedback_state = np.r_[
             self._normalize_db(m["bob_sinr"], self.params.sinr_db_min, self.params.sinr_db_max),
             self._normalize_db(m["bob_jammer_inr"], self.params.inr_db_min, self.params.inr_db_max),
-            self.threshold / (1.0 + self.threshold), m["sat_power_ratio"], m["ris_power_ratio"], m["move_ratio"],
-            m["orientation_move_ratio"], float(self.ris_action_repaired), float(self.uav_ris.boundary_clipped)
+            self.threshold / (1.0 + self.threshold), m["sat_power_ratio"],
+            m["ris_power_ratio"], float(self.ris_action_repaired),
         ]
         # 时间状态
         time_state = np.asarray([self.step_count / self.horizon], dtype=float)
         blocks = {
             "time": time_state,
             "position": position_state,
-            "orientation": orientation_state,
             "channel": channel_state,
+            "instant_csi": instant_csi_state,
             "ris": ris_state,
             "beam": beam_state,
             "feedback": feedback_state,
         }
         vector = _assemble_features(blocks, self.actor_feature_dims, "actor")
         return np.clip(vector, -1.0, 1.0).astype(np.float32)
+
+    @staticmethod
+    def _normalize_complex_block(value):
+        value = np.asarray(value, dtype=np.complex128).reshape(-1)
+        if not np.all(np.isfinite(value)):
+            raise RuntimeError("instantaneous CSI contains non-finite values")
+        norm = float(np.linalg.norm(value))
+        if norm <= 1e-30:
+            normalized = np.zeros_like(value)
+        else:
+            normalized = value / norm
+        return np.r_[normalized.real, normalized.imag]
+
+    def _instantaneous_csi_state(self):
+        """Return normalized observable CSI for the current fading slot."""
+        direct = np.vstack([bob.direct_channel for bob in self.bobs])
+        ris_to_bob = np.vstack([bob.ris_channel for bob in self.bobs])
+        return np.concatenate((
+            self._normalize_complex_block(direct),
+            self._normalize_complex_block(self.h_sat_ris),
+            self._normalize_complex_block(ris_to_bob),
+        ))
 
     def _get_critic_vector(self):
         m = self.metrics
@@ -602,7 +652,7 @@ class SAGIN_ENV(gym.Env):
             ris_rotation=rotation,
         )
         beta_rb = np.asarray([  #beta_rb表示RIS到Bob的信道增益
-            self.channel_model.get_a2g_large_scale_gain(
+            self.channel_model.get_ris_to_ground_large_scale_gain(
                 self.uav_ris.position,
                 bob.position,
                 ris_rotation=rotation,
@@ -610,14 +660,29 @@ class SAGIN_ENV(gym.Env):
             for bob in self.bobs
         ])
         #beta_sb表示卫星到Bob的信道增益
-        beta_sb = np.asarray([self.channel_model.get_s2g_large_scale_gain(self.satellite.position, bob.position) for bob in self.bobs])
-        p_los_rb = np.asarray(      #p_los_rb表示RIS到Bob的LOS概率
-            [self.channel_model.get_a2g_los_probability(self.uav_ris.position, bob.position) if beta_rb[index] > 0.0 else 0.0 for index, bob in enumerate(self.bobs)]
+        beta_sb = np.asarray([
+            self.channel_model.get_s2g_large_scale_gain(
+                self.satellite.position,
+                bob.position,
+            )
+            for bob in self.bobs
+        ])
+        rg_visibility = np.asarray(
+            [
+                self.channel_model.get_platform_to_ground_los_probability(
+                    self.uav_ris.position,
+                    bob.position,
+                    ris_rotation=rotation,
+                )
+                if beta_rb[index] > 0.0
+                else 0.0
+                for index, bob in enumerate(self.bobs)
+            ]
         )
         lower, upper = self.params.channel_gain_db_min, self.params.channel_gain_db_max
         return np.r_[
             self._normalize_db(beta_sr, lower, upper), self._normalize_db(beta_rb, lower, upper),
-            self._normalize_db(beta_sb, lower, upper), float(beta_sr > 0.0), (beta_rb > 0.0).astype(float), p_los_rb
+            self._normalize_db(beta_sb, lower, upper), float(beta_sr > 0.0), (beta_rb > 0.0).astype(float), rg_visibility
         ]
 
     @staticmethod
@@ -699,6 +764,18 @@ class SAGIN_ENV(gym.Env):
             return 0.0
         return float(max(np.dot(self.uav_ris.normal, direction / distance), 0.0))
 
+    def _ris_normal_angle_deg(self, node_position):
+        direction = np.asarray(node_position, dtype=float) - self.uav_ris.position
+        distance = np.linalg.norm(direction)
+        if distance <= 1e-12:
+            return 0.0
+        cosine = np.clip(
+            np.dot(self.uav_ris.normal, direction / distance),
+            -1.0,
+            1.0,
+        )
+        return float(np.degrees(np.arccos(cosine)))
+
     def _get_info(self):
         m = self.metrics
         critic_vector = self._get_critic_vector()
@@ -708,8 +785,37 @@ class SAGIN_ENV(gym.Env):
         critic_eve_nodes = np.c_[np.clip(eve_xy, -1.0, 1.0), np.r_[1.0, np.zeros(len(self.passive_eves))]].astype(np.float32)
         satellite_incidence_cosine = self._ris_front_cosine(self.satellite.position)
         bob_departure_cosine = np.asarray([self._ris_front_cosine(bob.position) for bob in self.bobs], dtype=float)
+        rotation = self.uav_ris.rotation_matrix
+        beta_sr = self.channel_model.get_s2a_large_scale_gain(
+            self.satellite.position,
+            self.uav_ris.position,
+            ris_rotation=rotation,
+        )
+        beta_rb = np.asarray([
+            self.channel_model.get_ris_to_ground_large_scale_gain(
+                self.uav_ris.position,
+                bob.position,
+                ris_rotation=rotation,
+            )
+            for bob in self.bobs
+        ])
+        active = self.uav_ris.element_mode.astype(bool)
+        effective_active_amplitude = (
+            float(np.max(self.uav_ris.amplitude[active]))
+            if np.any(active)
+            else 1.0
+        )
         return {
             "bob_sinr": m["bob_sinr"].copy(),
+            "bob_direct_rx_power_dbm": m["bob_direct_rx_power_dbm"].copy(),
+            "bob_ris_rx_power_dbm": m["bob_ris_rx_power_dbm"].copy(),
+            "bob_coherent_rx_power_dbm": m["bob_coherent_rx_power_dbm"].copy(),
+            "bob_ris_to_direct_power_ratio_db": m[
+                "bob_ris_to_direct_power_ratio_db"
+            ].copy(),
+            "bob_direct_environment_loss_db": np.asarray([
+                bob.direct_environment_loss_db for bob in self.bobs
+            ]),
             "bob_jammer_power": m["bob_jammer_power"].copy(),
             "bob_ris_noise_power": m["bob_ris_noise_power"].copy(),
             "bob_jammer_inr": m["bob_jammer_inr"].copy(),
@@ -737,6 +843,7 @@ class SAGIN_ENV(gym.Env):
             "ris_rotation_cost": m["orientation_move_ratio"],
             "ris_action_repaired": self.ris_action_repaired,
             "ris_projection_scale": self.uav_ris.last_power_projection_scale,
+            "ris_active_element_count": int(np.count_nonzero(active)),
             "uav_boundary_clipped": self.uav_ris.boundary_clipped,
             "ris_yaw_deg": float(np.degrees(self.uav_ris.yaw)),
             "ris_pitch_deg": float(np.degrees(self.uav_ris.pitch)),
@@ -745,6 +852,26 @@ class SAGIN_ENV(gym.Env):
             "ris_pitch_delta_deg": float(np.degrees(self.uav_ris.last_pitch_delta)),
             "satellite_ris_incidence_cosine": satellite_incidence_cosine,
             "ris_bob_departure_cosine": bob_departure_cosine,
+            "satellite_ris_distance_m": float(
+                np.linalg.norm(self.satellite.position - self.uav_ris.position)
+            ),
+            "ris_bob_distance_m": np.asarray([
+                np.linalg.norm(bob.position - self.uav_ris.position)
+                for bob in self.bobs
+            ]),
+            "satellite_ris_incidence_angle_deg": self._ris_normal_angle_deg(
+                self.satellite.position
+            ),
+            "ris_bob_departure_angle_deg": np.asarray([
+                self._ris_normal_angle_deg(bob.position) for bob in self.bobs
+            ]),
+            "ris_effective_active_amplitude": effective_active_amplitude,
+            "satellite_ris_large_scale_gain_db": float(
+                10.0 * np.log10(max(beta_sr, 1e-300))
+            ),
+            "ris_bob_large_scale_gain_db": 10.0 * np.log10(
+                np.maximum(beta_rb, 1e-300)
+            ),
             "ris_active_eve_cosine": self._ris_front_cosine(self.active_eve.position),
             "jammer_ris_correction_applied": self.jammer_ris_correction_applied,
             "satellite_ris_visible": bool(

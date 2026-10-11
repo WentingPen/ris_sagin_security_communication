@@ -1,8 +1,13 @@
 import numpy as np
 
+try:
+    from scipy.special import jv as _bessel_jv
+except ImportError:  # The optional Bessel pattern is disabled by default.
+    _bessel_jv = None
+
 
 class SAGIN_ChannelModel:
-    """SAGIN channel model. S2A: (N_ris, M_sat), A2G: (N_ground, N_ris), S2G: (N_ground, M_sat)."""
+    """SAGIN channel model for satellite, fixed HAPS-RIS, and ground nodes."""
 
     def __init__(self, params, rng=None):
         self.params = params
@@ -12,12 +17,43 @@ class SAGIN_ChannelModel:
             raise ValueError("carrier_freq and c must be finite and positive")
 
         self.wavelength = self.c / self.carrier_freq
+        self.rician_factor_sr_db = float(
+            getattr(params, "rician_factor_sr_db", 15.0)
+        )
+        self.m_rg = float(getattr(params, "m_rg", 2.0))
+        self.omega_rg = float(getattr(params, "omega_rg", 1.0))
+        self.alpha_rg = float(getattr(params, "alpha_rg", 2.0))
+        self.rg_reference_distance = float(
+            getattr(params, "rg_reference_distance_m", 1.0)
+        )
+        self.use_sat_bessel_pattern = bool(
+            getattr(params, "use_sat_bessel_pattern", False)
+        )
+        self.sat_bessel_3db_beamwidth = np.radians(
+            float(getattr(params, "sat_bessel_3db_beamwidth_deg", 9.0))
+        )
+        self.sat_bessel_beam_center = np.asarray(
+            getattr(params, "sat_bessel_beam_center", (0.0, 0.0, 0.0)),
+            dtype=float,
+        ).reshape(-1)
         self.a2g_a = float(getattr(params, "a2g_a", getattr(params, "s2g_a", 9.61)))
         self.a2g_b = float(getattr(params, "a2g_b", getattr(params, "s2g_b", 0.16)))
         self.eta_los = float(params.eta_los)
         self.eta_nlos = float(params.eta_nlos)
+        self.platform_channel_model = str(getattr(params, "platform_channel_model", "a2g")).lower()
+        self.rician_factor_h2g_db = float(getattr(params, "rician_factor_h2g_db", 15.0))
+        self.h2g_atmospheric_loss_db = float(getattr(params, "h2g_atmospheric_loss_db", 0.0))
+        self.h2g_clutter_loss_db = float(getattr(params, "h2g_clutter_loss_db", 0.0))
         self.atmospheric_loss_db = float(getattr(params, "atmospheric_loss_db", 0.0))
         self.s2a_atmospheric_loss_db = float(getattr(params, "s2a_atmospheric_loss_db", self.atmospheric_loss_db))
+        self.s2g_clutter_loss_db = float(getattr(params, "s2g_clutter_loss_db", 0.0))
+        self.s2g_fixed_shadowing_loss_db = float(
+            getattr(params, "s2g_fixed_shadowing_loss_db", 0.0)
+        )
+        self.s2g_shadowing_std_db = float(getattr(params, "s2g_shadowing_std_db", 0.0))
+        self.s2g_building_penetration_loss_db = float(
+            getattr(params, "s2g_building_penetration_loss_db", 0.0)
+        )
         self.sat_tx_gain = 10.0 ** (float(getattr(params, "sat_tx_gain_db", 0.0)) / 10.0)
         self.ground_rx_gain = 10.0 ** (float(getattr(params, "ground_rx_gain_db", 0.0)) / 10.0)
         self.ris_link_gain = 10.0 ** (float(getattr(params, "ris_link_gain_db", 0.0)) / 10.0)
@@ -34,6 +70,29 @@ class SAGIN_ChannelModel:
         self.enforce_ris_half_space = bool(getattr(params, "enforce_ris_half_space", True))
         self.ris_angle_gain_exponent = float(getattr(params, "ris_angle_gain_exponent", 1.0))
 
+        if min(
+            self.m_rg,
+            self.omega_rg,
+            self.alpha_rg,
+            self.rg_reference_distance,
+            self.sat_bessel_3db_beamwidth,
+        ) <= 0.0:
+            raise ValueError(
+                "RG, reference-distance, and Bessel parameters must be positive"
+            )
+        if not np.isfinite(self.rician_factor_sr_db):
+            raise ValueError("rician_factor_sr_db must be finite")
+        if self.sat_bessel_3db_beamwidth >= np.pi:
+            raise ValueError("sat_bessel_3db_beamwidth_deg must be smaller than 180 degrees")
+        if self.sat_bessel_beam_center.size != 3 or not np.all(
+            np.isfinite(self.sat_bessel_beam_center)
+        ):
+            raise ValueError(
+                "sat_bessel_beam_center must contain 3 finite coordinates"
+            )
+        if self.use_sat_bessel_pattern and _bessel_jv is None:
+            raise ImportError("use_sat_bessel_pattern=1 requires scipy.special")
+
         if self.array_spacing_wavelengths <= 0.0: #阵列间距必须为正
             raise ValueError("array_spacing_wavelengths must be positive")
         if min(self.sat_array_rows, self.ris_array_rows, self.ground_array_rows) < 1:
@@ -42,9 +101,25 @@ class SAGIN_ChannelModel:
             raise ValueError("array planes must be xy, xz, or yz")
         if not np.isfinite(self.ris_angle_gain_exponent) or self.ris_angle_gain_exponent < 0.0:
             raise ValueError("ris_angle_gain_exponent must be finite and non-negative")
+        if self.platform_channel_model not in {"a2g", "h2g"}:
+            raise ValueError("platform_channel_model must be 'a2g' or 'h2g'")
+        if not np.isfinite(self.rician_factor_h2g_db):
+            raise ValueError("rician_factor_h2g_db must be finite")
+        if min(
+            self.h2g_atmospheric_loss_db,
+            self.h2g_clutter_loss_db,
+            self.atmospheric_loss_db,
+            self.s2a_atmospheric_loss_db,
+            self.s2g_clutter_loss_db,
+            self.s2g_fixed_shadowing_loss_db,
+            self.s2g_shadowing_std_db,
+            self.s2g_building_penetration_loss_db,
+        ) < 0.0:
+            raise ValueError("configured propagation losses must be non-negative")
 
         seed = getattr(params, "seed", None)
         self.rng = rng if rng is not None else np.random.default_rng(seed)
+        self._s2g_shadowing_cache = {}
 
     def _free_space_path_loss(self, distance):
         distance = np.maximum(np.asarray(distance, dtype=float), 1.0)
@@ -184,6 +259,88 @@ class SAGIN_ChannelModel:
         """返回一个复高斯随机矩阵，表示瑞利衰落信道的随机小尺度衰落分量。"""
         return (self.rng.normal(size=shape) + 1j * self.rng.normal(size=shape)) / np.sqrt(2.0)
 
+    def _sr_rician(self, los_response, path_phase):
+        """Sample a unit-average-power LoS-dominant Satellite-RIS channel."""
+        los_response = np.asarray(los_response, dtype=np.complex128)
+        k_linear = 10.0 ** (self.rician_factor_sr_db / 10.0)
+        return (
+            np.sqrt(k_linear / (k_linear + 1.0))
+            * complex(path_phase)
+            * los_response
+            + np.sqrt(1.0 / (k_linear + 1.0))
+            * self._rayleigh(los_response.shape)
+        )
+
+    def _s2g_shadowing_db(self, sat_pos, ground_pos):
+        """Return one cached zero-mean dB shadowing sample per fixed link."""
+        if self.s2g_shadowing_std_db == 0.0:
+            return 0.0
+        key = (
+            tuple(np.asarray(sat_pos, dtype=np.float64)),
+            tuple(np.asarray(ground_pos, dtype=np.float64)),
+        )
+        if key not in self._s2g_shadowing_cache:
+            self._s2g_shadowing_cache[key] = float(
+                self.rng.normal(0.0, self.s2g_shadowing_std_db)
+            )
+        return self._s2g_shadowing_cache[key]
+
+    def _nakagami_complex(self, array_response, path_phase):
+        """Sample complex Nakagami coefficients with E[|g_rg|^2]=Omega_rg."""
+        array_response = np.asarray(array_response, dtype=np.complex128)
+        power = self.rng.gamma(
+            shape=self.m_rg,
+            scale=self.omega_rg / self.m_rg,
+            size=array_response.shape,
+        )
+        random_phase = self.rng.uniform(
+            -np.pi,
+            np.pi,
+            size=array_response.shape,
+        )
+        return (
+            np.sqrt(power)
+            * np.exp(1j * random_phase)
+            * complex(path_phase)
+            * array_response
+        )
+
+    def satellite_bessel_power_gain(self, sat_pos, node_pos):
+        """Return a fixed Bessel envelope with unit peak and no absolute gain."""
+        if not self.use_sat_bessel_pattern:
+            return 1.0
+        sat_pos = self._as_pos(sat_pos)
+        node_pos = self._as_pos(node_pos)
+        link_direction = node_pos - sat_pos
+        beam_direction = self.sat_bessel_beam_center - sat_pos
+        link_norm = np.linalg.norm(link_direction)
+        beam_norm = np.linalg.norm(beam_direction)
+        if link_norm <= 1e-12 or beam_norm <= 1e-12:
+            raise ValueError(
+                "satellite, node, and Bessel beam center must be distinct"
+            )
+        cosine = np.clip(
+            np.dot(link_direction, beam_direction) / (link_norm * beam_norm),
+            -1.0,
+            1.0,
+        )
+        if cosine <= 0.0:
+            return 0.0
+        theta = float(np.arccos(cosine))
+        rho = (
+            2.07123
+            * np.sin(theta)
+            / np.sin(self.sat_bessel_3db_beamwidth)
+        )
+        if abs(rho) <= 1e-8:
+            amplitude = 1.0
+        else:
+            amplitude = (
+                _bessel_jv(1, rho) / (2.0 * rho)
+                + 36.0 * _bessel_jv(3, rho) / rho ** 3
+            )
+        return float(np.clip(np.abs(amplitude) ** 2, 0.0, 1.0))
+
     def ris_angular_power_gain(self, ris_pos, node_pos, rotation=None):
         """Return max(n dot u, 0)^q as a power-domain gain for the RIS-to-node direction."""
         if not self.enforce_ris_half_space:
@@ -235,13 +392,127 @@ class SAGIN_ChannelModel:
             * angular_power_gain
         )
 
-    def get_s2g_large_scale_gain(self, sat_pos, ground_pos):
-        """计算卫星到地面节点的 S2G 大尺度增益，考虑自由空间路径损耗和大气衰减。"""
+    def get_h2g_los_probability(self, haps_pos, ground_pos):
+        """Return the clear-sky LoS probability for the fixed HAPS baseline."""
+        self._as_pos(haps_pos)
+        self._as_pos(ground_pos)
+        return 1.0
+
+    def get_h2g_large_scale_gain(self, haps_pos, ground_pos, ris_rotation=None):
+        """HAPS-ground gain: FSPL, explicit excess losses, and RIS element pattern."""
+        haps_pos = self._as_pos(haps_pos)
+        ground_pos = self._as_pos(ground_pos)
+        angular_power_gain = self.ris_angular_power_gain(haps_pos, ground_pos, ris_rotation)
+        if angular_power_gain <= 0.0:
+            return 0.0
+        distance = max(float(np.linalg.norm(haps_pos - ground_pos)), 1.0)
+        excess_loss = 10.0 ** (
+            -(self.h2g_atmospheric_loss_db + self.h2g_clutter_loss_db) / 10.0
+        )
+        return float(
+            self._free_space_path_loss(distance)
+            * excess_loss
+            * self.ris_link_gain
+            * self.ground_rx_gain
+            * angular_power_gain
+        )
+
+    def get_ris_to_ground_large_scale_gain(
+        self,
+        ris_pos,
+        ground_pos,
+        ris_rotation=None,
+    ):
+        """Return the dimensionless RIS-ground power gain at a physical 1 m reference."""
+        ris_pos = self._as_pos(ris_pos)
+        ground_pos = self._as_pos(ground_pos)
+        angular_power_gain = self.ris_angular_power_gain(
+            ris_pos,
+            ground_pos,
+            ris_rotation,
+        )
+        if angular_power_gain <= 0.0:
+            return 0.0
+        distance = max(
+            float(np.linalg.norm(ris_pos - ground_pos)),
+            self.rg_reference_distance,
+        )
+        beta0 = (
+            self.wavelength
+            / (4.0 * np.pi * self.rg_reference_distance)
+        ) ** 2
+        path_gain = beta0 * (
+            distance / self.rg_reference_distance
+        ) ** (-self.alpha_rg)
+        return float(
+            path_gain
+            * self.ris_link_gain
+            * self.ground_rx_gain
+            * angular_power_gain
+        )
+
+    def get_platform_to_ground_los_probability(
+        self,
+        platform_pos,
+        ground_pos,
+        ris_rotation=None,
+    ):
+        """Compatibility feature: one means the ground node is on the RIS front side."""
+        return float(
+            self._ris_link_visible(
+                platform_pos,
+                ground_pos,
+                ris_rotation,
+            )
+        )
+
+    def get_platform_to_ground_large_scale_gain(
+        self,
+        platform_pos,
+        ground_pos,
+        ris_rotation=None,
+    ):
+        """Compatibility alias for the unified RIS-ground large-scale model."""
+        return self.get_ris_to_ground_large_scale_gain(
+            platform_pos,
+            ground_pos,
+            ris_rotation,
+        )
+
+    def get_s2g_large_scale_gain(
+        self,
+        sat_pos,
+        ground_pos,
+        additional_environment_loss_db=0.0,
+    ):
+        """Return S2G power gain with global and receiver-local dB losses."""
         sat_pos = self._as_pos(sat_pos)
         ground_pos = self._as_pos(ground_pos)
+        additional_environment_loss_db = float(additional_environment_loss_db)
+        if (
+            not np.isfinite(additional_environment_loss_db)
+            or additional_environment_loss_db < 0.0
+        ):
+            raise ValueError(
+                "additional_environment_loss_db must be finite and non-negative"
+            )
         distance = max(float(np.linalg.norm(sat_pos - ground_pos)), 1.0)
-        atmospheric = 10.0 ** (-self.atmospheric_loss_db / 10.0)
-        return float(self._free_space_path_loss(distance) * atmospheric * self.sat_tx_gain * self.ground_rx_gain)
+        shadowing_db = self._s2g_shadowing_db(sat_pos, ground_pos)
+        excess_loss_db = (
+            self.atmospheric_loss_db
+            + self.s2g_clutter_loss_db
+            + self.s2g_fixed_shadowing_loss_db
+            + self.s2g_building_penetration_loss_db
+            + shadowing_db
+            + additional_environment_loss_db
+        )
+        return float(
+            self._free_space_path_loss(distance)
+            * 10.0 ** (-excess_loss_db / 10.0)
+            * self.sat_tx_gain
+            * self.ground_rx_gain
+            * self.satellite_bessel_power_gain(sat_pos, ground_pos)
+        )
 
     def get_s2a_large_scale_gain(self, sat_pos, uav_pos, ris_rotation=None):
         """计算卫星到 UAV 的 S2A 大尺度增益，考虑自由空间路径损耗和大气衰减。"""
@@ -252,12 +523,14 @@ class SAGIN_ChannelModel:
             return 0.0
         distance = max(float(np.linalg.norm(sat_pos - uav_pos)), 1.0)
         atmospheric = 10.0 ** (-self.s2a_atmospheric_loss_db / 10.0)
+        bessel_power_gain = self.satellite_bessel_power_gain(sat_pos, uav_pos)
         return float(
             self._free_space_path_loss(distance)
             * atmospheric
             * self.sat_tx_gain
             * self.ris_link_gain
             * angular_power_gain
+            * bessel_power_gain
         )
 
     def get_g2g_large_scale_gain(self, pos_tx, pos_rx):
@@ -316,11 +589,119 @@ class SAGIN_ChannelModel:
             h_small = self._rayleigh(h_los.shape)
         return np.sqrt(large_scale) * h_small
 
-    def get_s2g_channel(self, sat_pos, ground_pos, num_sat_antennas, num_ground_antennas):
+    def get_h2g_channel(
+        self,
+        haps_pos,
+        ground_pos,
+        num_haps_antennas,
+        num_ground_antennas,
+        ris_rotation=None,
+    ):
+        """Generate the fixed-HAPS Rician channel to one ground node."""
+        haps_pos = self._as_pos(haps_pos)
+        ground_pos = self._as_pos(ground_pos)
+        num_haps_antennas = int(num_haps_antennas)
+        num_ground_antennas = int(num_ground_antennas)
+        large_scale = self.get_h2g_large_scale_gain(
+            haps_pos,
+            ground_pos,
+            ris_rotation=ris_rotation,
+        )
+        if large_scale <= 0.0:
+            return np.zeros((num_ground_antennas, num_haps_antennas), dtype=np.complex128)
+        distance = max(float(np.linalg.norm(haps_pos - ground_pos)), 1.0)
+        h_los = self._los_array_matrix(
+            haps_pos,
+            ground_pos,
+            num_haps_antennas,
+            num_ground_antennas,
+            self.ris_array_rows,
+            self.ground_array_rows,
+            self.ris_array_plane,
+            self.ground_array_plane,
+            tx_rotation=self._as_rotation(ris_rotation),
+        )
+        path_phase = np.exp(-1j * 2.0 * np.pi * distance / self.wavelength)
+        k_linear = 10.0 ** (self.rician_factor_h2g_db / 10.0)
+        h_small = (
+            np.sqrt(k_linear / (k_linear + 1.0)) * path_phase * h_los
+            + np.sqrt(1.0 / (k_linear + 1.0)) * self._rayleigh(h_los.shape)
+        )
+        return np.sqrt(large_scale) * h_small
+
+    def get_ris_to_ground_channel(
+        self,
+        ris_pos,
+        ground_pos,
+        num_ris_elements,
+        num_ground_antennas,
+        ris_rotation=None,
+    ):
+        """Generate one RIS-ground channel with Nakagami envelope fading."""
+        ris_pos = self._as_pos(ris_pos)
+        ground_pos = self._as_pos(ground_pos)
+        num_ris_elements = int(num_ris_elements)
+        num_ground_antennas = int(num_ground_antennas)
+        large_scale = self.get_ris_to_ground_large_scale_gain(
+            ris_pos,
+            ground_pos,
+            ris_rotation=ris_rotation,
+        )
+        shape = (num_ground_antennas, num_ris_elements)
+        if large_scale <= 0.0:
+            return np.zeros(shape, dtype=np.complex128)
+        distance = max(
+            float(np.linalg.norm(ris_pos - ground_pos)),
+            self.rg_reference_distance,
+        )
+        array_response = self._los_array_matrix(
+            ris_pos,
+            ground_pos,
+            num_ris_elements,
+            num_ground_antennas,
+            self.ris_array_rows,
+            self.ground_array_rows,
+            self.ris_array_plane,
+            self.ground_array_plane,
+            tx_rotation=self._as_rotation(ris_rotation),
+        )
+        path_phase = np.exp(-1j * 2.0 * np.pi * distance / self.wavelength)
+        h_small = self._nakagami_complex(array_response, path_phase)
+        return np.sqrt(large_scale) * h_small
+
+    def get_platform_to_ground_channel(
+        self,
+        platform_pos,
+        ground_pos,
+        num_platform_antennas,
+        num_ground_antennas,
+        ris_rotation=None,
+    ):
+        """Compatibility alias for the unified RIS-ground channel model."""
+        return self.get_ris_to_ground_channel(
+            platform_pos,
+            ground_pos,
+            num_platform_antennas,
+            num_ground_antennas,
+            ris_rotation=ris_rotation,
+        )
+
+    def get_s2g_channel(
+        self,
+        sat_pos,
+        ground_pos,
+        num_sat_antennas,
+        num_ground_antennas,
+        additional_environment_loss_db=0.0,
+    ):
         sat_pos = self._as_pos(sat_pos)
         ground_pos = self._as_pos(ground_pos)
         distance = max(float(np.linalg.norm(sat_pos - ground_pos)), 1.0)
-        large_scale = self.get_s2g_large_scale_gain(sat_pos, ground_pos)
+        large_scale = self.get_s2g_large_scale_gain(
+            sat_pos,
+            ground_pos,
+            additional_environment_loss_db=additional_environment_loss_db,
+        )
         h_los = self._los_array_matrix(sat_pos, ground_pos, num_sat_antennas, num_ground_antennas, self.sat_array_rows, self.ground_array_rows, self.sat_array_plane, self.ground_array_plane)
         return np.sqrt(large_scale) * h_los * np.exp(-1j * 2.0 * np.pi * distance / self.wavelength)
 
@@ -342,7 +723,9 @@ class SAGIN_ChannelModel:
             self.ris_array_plane,
             rx_rotation=self._as_rotation(ris_rotation),
         )
-        return np.sqrt(large_scale) * h_los * np.exp(-1j * 2.0 * np.pi * distance / self.wavelength)
+        path_phase = np.exp(-1j * 2.0 * np.pi * distance / self.wavelength)
+        h_small = self._sr_rician(h_los, path_phase)
+        return np.sqrt(large_scale) * h_small
 
     def get_g2g_channel(self, pos_tx, pos_rx):
         large_scale = self.get_g2g_large_scale_gain(pos_tx, pos_rx)

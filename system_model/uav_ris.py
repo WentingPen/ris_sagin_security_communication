@@ -34,7 +34,7 @@ def _build_element_to_group(
 
 
 class RISPowerInfeasibleError(ValueError):
-    """The selected active groups cannot satisfy the RIS power constraint."""
+    """The selected active elements cannot satisfy the RIS power constraint."""
 
 
 class UAV_RIS:
@@ -217,13 +217,60 @@ class UAV_RIS:
         ) % (2.0 * np.pi) - np.pi
         return self.ris_coeff.copy(), self.active_ris_coeff.copy()
 
+    def configure_elements(self, element_mode, phase_real, phase_imag):
+        """Configure per-element active modes and unit-modulus complex phases."""
+        element_mode = _vector(element_mode, self.num_elements, "element_mode")
+        phase_real = _vector(phase_real, self.num_elements, "phase_real")
+        phase_imag = _vector(phase_imag, self.num_elements, "phase_imag")
+        if not np.all(np.isin(element_mode, (0.0, 1.0))):
+            raise ValueError("element_mode must contain only 0 or 1")
+
+        requested_phase = phase_real + 1j * phase_imag
+        magnitude = np.abs(requested_phase)
+        unit_phase = np.ones(self.num_elements, dtype=np.complex128)
+        nonzero = magnitude > 0.0
+        unit_phase[nonzero] = requested_phase[nonzero] / magnitude[nonzero]
+
+        self.element_mode = element_mode.astype(int)
+        self.amplitude = np.where(
+            self.element_mode == 1,
+            self.max_amplitude,
+            1.0,
+        )
+        self.phase = np.angle(unit_phase)
+        self.base_phase = self.phase.copy()
+        self.group_phase_residual = np.zeros(self.num_groups, dtype=float)
+
+        # Retain these fields for legacy diagnostics.  A value of -1 marks a
+        # group whose elements no longer share one active/passive mode.
+        self.group_mode = np.empty(self.num_groups, dtype=int)
+        self.group_amplitude = np.ones(self.num_groups, dtype=float)
+        for group_index in range(self.num_groups):
+            group_elements = self.element_to_group == group_index
+            modes = self.element_mode[group_elements]
+            self.group_mode[group_index] = (
+                int(modes[0]) if np.all(modes == modes[0]) else -1
+            )
+            if np.any(modes == 1):
+                self.group_amplitude[group_index] = self.max_amplitude
+
+        return self.ris_coeff.copy(), self.active_ris_coeff.copy()
+
     def _power_weights(self, h_sat_ris, W, active_to_ris):
         h_sat_ris = np.asarray(h_sat_ris, dtype=np.complex128)
         W = np.asarray(W, dtype=np.complex128)
         active_to_ris = _vector(active_to_ris, self.num_elements, "active_to_ris", dtype=np.complex128)
-        if h_sat_ris.ndim != 2 or h_sat_ris.shape[0] != self.num_elements:
+        if (
+            h_sat_ris.ndim != 2
+            or h_sat_ris.shape[0] != self.num_elements
+            or not np.all(np.isfinite(h_sat_ris))
+        ):
             raise ValueError("h_sat_ris must have shape (N, M)")
-        if W.ndim != 2 or h_sat_ris.shape[1] != W.shape[0]:
+        if (
+            W.ndim != 2
+            or h_sat_ris.shape[1] != W.shape[0]
+            or not np.all(np.isfinite(W))
+        ):
             raise ValueError("W must have shape (M, U)")
         satellite_incident = np.sum(np.abs(h_sat_ris @ W) ** 2, axis=1)
         jammer_incident = self.jammer_power * np.abs(active_to_ris) ** 2
@@ -239,34 +286,41 @@ class UAV_RIS:
         self.last_power_projection_scale = 1.0
         weights = self._power_weights(h_sat_ris, W, active_to_ris)
         active = self.element_mode.astype(bool)
-        used_power = float(np.sum(weights[active] * self.amplitude[active] ** 2))
-        if used_power <= self.max_power:
-            return used_power
-        minimum_power = float(np.sum(weights[active]))
-        if minimum_power > self.max_power + 1e-12:
+        self.amplitude[~active] = 1.0
+        if not np.any(active):
+            self.group_amplitude.fill(1.0)
+            return 0.0
+
+        active_weight = float(np.sum(weights[active]))
+        if active_weight > self.max_power:
+            self.amplitude[active] = 1.0
             self.last_power_projection_scale = 0.0
-            raise RISPowerInfeasibleError("selected active groups exceed ris_max_power even at unit gain")
-        low, high = 0.0, 1.0
-        requested = self.amplitude[active].copy()
-        for _ in range(60):
-            scale = 0.5 * (low + high)
-            projected = 1.0 + scale * (requested - 1.0)
-            if float(np.sum(weights[active] * projected ** 2)) <= self.max_power:
-                low = scale
-            else:
-                high = scale
-        self.amplitude[active] = 1.0 + low * (requested - 1.0)
-        projected_group_amplitude = np.ones(self.num_groups, dtype=float)
+            raise RISPowerInfeasibleError(
+                "selected active elements exceed ris_max_power even at unit gain"
+            )
+
+        if active_weight <= 0.0:
+            active_gain = self.max_amplitude
+        else:
+            active_gain = max(
+                1.0,
+                min(
+                    self.max_amplitude,
+                    float(np.sqrt(self.max_power / active_weight)),
+                ),
+            )
+        self.amplitude[active] = active_gain
+
+        self.group_amplitude.fill(1.0)
         for group_index in range(self.num_groups):
-            if self.group_mode[group_index] == 0:
-                continue
             group_elements = self.element_to_group == group_index
-            values = self.amplitude[group_elements]
-            if not np.allclose(values, values[0]):
-                raise RuntimeError("RIS power projection broke group amplitude equality")
-            projected_group_amplitude[group_index] = values[0]
-        self.group_amplitude = projected_group_amplitude
-        self.last_power_projection_scale = low
+            if np.any(active[group_elements]):
+                self.group_amplitude[group_index] = active_gain
+
+        if self.max_amplitude > 1.0:
+            self.last_power_projection_scale = float(
+                (active_gain - 1.0) / (self.max_amplitude - 1.0)
+            )
         return self.get_active_ris_power(h_sat_ris, W, active_to_ris)
 
     def get_position(self):

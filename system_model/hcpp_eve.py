@@ -121,9 +121,9 @@ class PassiveEVE:
         return self._h_ris.copy()
 
     def sample_ris_channel(self, uav_pos, ris_rotation=None):
-        """ 生成并存储给定 UAV 位置的 A2G RIS 信道。 """
+        """Generate and cache the configured platform-to-ground RIS channel."""
         uav_pos = _positions3(uav_pos)[0]
-        self._h_ris = self.channel_model.get_a2g_channel(
+        self._h_ris = self.channel_model.get_ris_to_ground_channel(
             uav_pos,
             self.position,
             self.num_ris_elements,
@@ -258,7 +258,7 @@ class ActiveEVE(PassiveEVE):
         if uav_pos is not None:
             uav_pos = _positions3(uav_pos)[0]
             ris_coeff = _ris_vector(ris_coeff, self.num_ris_elements, "ris_coeff")
-            active_ris_gain = self.channel_model.get_a2g_large_scale_gain(
+            active_ris_gain = self.channel_model.get_ris_to_ground_large_scale_gain(
                 uav_pos,
                 self.position,
                 ris_rotation=ris_rotation,
@@ -269,7 +269,7 @@ class ActiveEVE(PassiveEVE):
                 eve.position,
                 self.channel_model.get_g2g_large_scale_gain(self.position, eve.position),
                 reflected_scale
-                * self.channel_model.get_a2g_large_scale_gain(
+                * self.channel_model.get_ris_to_ground_large_scale_gain(
                     uav_pos,
                     eve.position,
                     ris_rotation=ris_rotation,
@@ -287,7 +287,7 @@ class ActiveEVE(PassiveEVE):
             bob_link = self.channel_model.get_g2g_large_scale_gain(self.position, bob.position)
             bob_ris_link = (
                 reflected_scale
-                * self.channel_model.get_a2g_large_scale_gain(
+                * self.channel_model.get_ris_to_ground_large_scale_gain(
                     uav_pos,
                     bob.position,
                     ris_rotation=ris_rotation,

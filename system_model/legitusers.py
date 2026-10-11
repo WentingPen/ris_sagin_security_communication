@@ -9,7 +9,7 @@ def _position3(position):
         position = np.r_[position, 0.0]
     if position.size != 3 or not np.all(np.isfinite(position)):
         raise ValueError("position must contain 2 or 3 finite coordinates")
-    return position
+    return position.copy()
 
 
 def _ris_vector(value, size, name):
@@ -27,6 +27,12 @@ class LEGITUSER:
         self.channel_model = channel_model or SAGIN_ChannelModel(params)
         self.num_sat_antennas = int(params.num_sat_antennas)
         self.num_ris_elements = int(params.num_ris_elements)
+        # Common fixed environment loss used by every satellite-ground link.
+        self.direct_environment_loss_db = float(
+            self.channel_model.s2g_clutter_loss_db
+            + self.channel_model.s2g_fixed_shadowing_loss_db
+            + self.channel_model.s2g_building_penetration_loss_db
+        )
         if not 0 <= self.user_index < int(params.num_users):
             raise ValueError("user_index is out of range")
         self._h_direct = None
@@ -57,7 +63,7 @@ class LEGITUSER:
             self.num_sat_antennas,
             1,
         ).reshape(-1)
-        self._h_ris = self.channel_model.get_a2g_channel(
+        self._h_ris = self.channel_model.get_ris_to_ground_channel(
             uav_pos,
             self.position,
             self.num_ris_elements,

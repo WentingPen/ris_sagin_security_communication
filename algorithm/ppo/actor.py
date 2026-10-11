@@ -1,33 +1,35 @@
-import torch
-import numpy as np
 import math
+
+import numpy as np
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.distributions import Normal, Bernoulli
+from torch.distributions import Bernoulli, Normal
+
 from algorithm.ppo.risk_gnn import RiskGNN
 
-class HybridActor(nn.Module):
-    def __init__(self, actor_dim, risk_shape, edge_index, risk_grid_size, num_ris_group,
-                 hidden_dim=256, risk_hidden_dim=64, risk_feature_dim=64):
-        """risk_shape表示风险节点的形状，edge_index表示风险图的边索引，risk_grid_size表示风险网格的大小，
-        risk_feature_dim表示风险特征维度。"""
-        super().__init__()
-        self.G = int(num_ris_group)
-        self.actor_dim = int(actor_dim)
-        self.continuous_action_shapes = {
-            "uav_move": (2,),
-            "ris_orientation_delta": (2,),
-            "ris_amplitude_residual": (self.G,),
-            "ris_phase_residual": (self.G,),
-        }
-        self.continuous_action_slices = {}
-        offset = 0
-        for name, shape in self.continuous_action_shapes.items():
-            block_size = math.prod(shape)
-            self.continuous_action_slices[name] = slice(offset, offset + block_size)
-            offset += block_size
-        self.continuous_dim = offset
 
+def _squashed_normal_log_prob(distribution, pre_tanh):
+    """Log probability of tanh(z), evaluated from its pre-tanh value z."""
+    log_abs_det_jacobian = 2.0 * (
+        math.log(2.0) - pre_tanh - F.softplus(-2.0 * pre_tanh)
+    )
+    return (distribution.log_prob(pre_tanh) - log_abs_det_jacobian).sum(dim=-1)
+
+
+class _ActorFeatureExtractor(nn.Module):
+    def __init__(
+        self,
+        actor_dim,
+        risk_shape,
+        edge_index,
+        risk_grid_size,
+        hidden_dim,
+        risk_hidden_dim,
+        risk_feature_dim,
+    ):
+        super().__init__()
+        self.actor_dim = int(actor_dim)
         self.risk_gnn = RiskGNN(
             edge_index=edge_index,
             grid_size=risk_grid_size,
@@ -35,110 +37,287 @@ class HybridActor(nn.Module):
             hidden_dim=risk_hidden_dim,
             output_dim=risk_feature_dim,
         )
-
-        input_dim = self.actor_dim + self.risk_gnn.output_dim
-
-        self.body = nn.Sequential(
-            nn.Linear(input_dim, hidden_dim),
+        self.feature_net = nn.Sequential(
+            nn.Linear(self.actor_dim + self.risk_gnn.output_dim, hidden_dim),
             nn.Tanh(),
             nn.Linear(hidden_dim, hidden_dim),
             nn.Tanh(),
         )
 
-        self.mean_head = nn.Linear(hidden_dim, self.continuous_dim)
-        self.log_std = nn.Parameter(torch.full((self.continuous_dim,), -0.5)) #表示 log_std 的初始值为 -0.5，表示标准差的初始值为 exp(-0.5) ≈ 0.6065
-        self.mode_head = nn.Linear(hidden_dim, self.G)  # 表示离散动作，ris模式
-
-    def _distribution(self, vector, risk_nodes):
-        """根据输入的actor向量和风险节点特征，返回连续动作的正态分布和离散动作的伯努利分布。""" 
-        device = self.log_std.device
+    def forward(self, vector, risk_nodes):
+        device = next(self.parameters()).device
         vector = torch.as_tensor(vector, dtype=torch.float32, device=device)
-        risk_nodes = torch.as_tensor(risk_nodes, dtype=torch.float32, device=device)
-
+        risk_nodes = torch.as_tensor(
+            risk_nodes, dtype=torch.float32, device=device
+        )
         if vector.ndim == 1:
             vector = vector.unsqueeze(0)
         if risk_nodes.ndim == 2:
             risk_nodes = risk_nodes.unsqueeze(0)
-
         if vector.ndim != 2 or vector.shape[1] != self.actor_dim:
             raise ValueError(f"vector must have shape (B, {self.actor_dim})")
-        if vector.shape[0] != risk_nodes.shape[0]:
-            raise ValueError("vector and risk_nodes must have the same batch size")
+        if risk_nodes.ndim != 3 or vector.shape[0] != risk_nodes.shape[0]:
+            raise ValueError(
+                "vector and risk_nodes must have matching batch dimensions"
+            )
 
         risk_feature = self.risk_gnn(risk_nodes)
-        features = torch.cat((vector, risk_feature), dim=-1)
-        hidden = self.body(features)
+        return self.feature_net(torch.cat((vector, risk_feature), dim=-1))
 
-        mean = self.mean_head(hidden)
-        std = self.log_std.clamp(-5.0, 2.0).exp().expand_as(mean)  # 限制 log_std 的范围，防止数值不稳定
 
-        normal = Normal(mean, std)
-        bernoulli = Bernoulli(logits=self.mode_head(hidden))
+class SatelliteActor(nn.Module):
+    """Satellite policy with a shared encoder and complex beamforming heads."""
 
-        return normal, bernoulli
+    def __init__(
+        self,
+        actor_dim,
+        risk_shape,
+        edge_index,
+        risk_grid_size,
+        num_sat_antennas,
+        hidden_dim=256,
+        risk_hidden_dim=64,
+        risk_feature_dim=64,
+    ):
+        super().__init__()
+        self.actor_dim = int(actor_dim)
+        self.num_antennas = int(num_sat_antennas)
+        if self.num_antennas <= 0:
+            raise ValueError("num_sat_antennas must be positive")
 
+        self.continuous_action_shapes = {
+            "sat_beam_real": (self.num_antennas,),
+            "sat_beam_imag": (self.num_antennas,),
+        }
+        self.continuous_dim = 2 * self.num_antennas
+        self.feature_extractor = _ActorFeatureExtractor(
+            actor_dim=self.actor_dim,
+            risk_shape=risk_shape,
+            edge_index=edge_index,
+            risk_grid_size=risk_grid_size,
+            hidden_dim=hidden_dim,
+            risk_hidden_dim=risk_hidden_dim,
+            risk_feature_dim=risk_feature_dim,
+        )
+        self.beam_real_head = nn.Linear(hidden_dim, self.num_antennas)
+        self.beam_imag_head = nn.Linear(hidden_dim, self.num_antennas)
+        self.beam_real_log_std = nn.Parameter(
+            torch.full((self.num_antennas,), -0.5)
+        )
+        self.beam_imag_log_std = nn.Parameter(
+            torch.full((self.num_antennas,), -0.5)
+        )
 
     @staticmethod
-    def _joint_log_prob(normal, bernoulli, pre_tanh, mode):
-        """计算连续和离散动作的联合对数概率。"""
-        log_det = 2.0 * (math.log(2.0) - pre_tanh - F.softplus(-2.0 * pre_tanh))
-        continuous_log_prob = (normal.log_prob(pre_tanh) - log_det).sum(dim=-1)
-        mode_log_prob = bernoulli.log_prob(mode.float()).sum(dim=-1)
+    def _normal(mean, log_std):
+        std = log_std.clamp(-5.0, 2.0).exp().expand_as(mean)
+        return Normal(mean, std)
 
-        return continuous_log_prob + mode_log_prob
+    def _distributions(self, vector, risk_nodes):
+        hidden = self.feature_extractor(vector, risk_nodes)
+        real = self._normal(
+            self.beam_real_head(hidden), self.beam_real_log_std
+        )
+        imag = self._normal(
+            self.beam_imag_head(hidden), self.beam_imag_log_std
+        )
+        return real, imag
 
     def sample(self, vector, risk_nodes, deterministic=False):
-        """从联合分布中采样连续和离散动作，并返回相应的对数概率。"""
-        normal, bernoulli = self._distribution(vector, risk_nodes)
-
+        real_distribution, imag_distribution = self._distributions(
+            vector, risk_nodes
+        )
         if deterministic:
-            pre_tanh = normal.mean
-            mode = (bernoulli.probs > 0.5).float()
+            real_pre_tanh = real_distribution.mean
+            imag_pre_tanh = imag_distribution.mean
         else:
-            pre_tanh = normal.rsample()  # 使用 reparameterization trick 进行采样
-            mode = bernoulli.sample()
+            real_pre_tanh = real_distribution.rsample()
+            imag_pre_tanh = imag_distribution.rsample()
 
+        pre_tanh = torch.cat((real_pre_tanh, imag_pre_tanh), dim=-1)
         continuous = torch.tanh(pre_tanh)
-        log_prob = self._joint_log_prob(normal, bernoulli, pre_tanh, mode)
+        log_prob = (
+            _squashed_normal_log_prob(real_distribution, real_pre_tanh)
+            + _squashed_normal_log_prob(imag_distribution, imag_pre_tanh)
+        )
+        return continuous, pre_tanh, log_prob
 
+    def evaluate(self, vector, risk_nodes, pre_tanh):
+        real_distribution, imag_distribution = self._distributions(
+            vector, risk_nodes
+        )
+        device = self.beam_real_log_std.device
+        pre_tanh = torch.as_tensor(
+            pre_tanh, dtype=torch.float32, device=device
+        )
+        if pre_tanh.ndim == 1:
+            pre_tanh = pre_tanh.unsqueeze(0)
+        if pre_tanh.ndim != 2 or pre_tanh.shape[1] != self.continuous_dim:
+            raise ValueError(
+                f"pre_tanh must have shape (B, {self.continuous_dim})"
+            )
+        if pre_tanh.shape[0] != real_distribution.mean.shape[0]:
+            raise ValueError("pre_tanh and observations must have the same batch size")
+
+        real_pre_tanh, imag_pre_tanh = pre_tanh.split(
+            self.num_antennas, dim=-1
+        )
+        log_prob = (
+            _squashed_normal_log_prob(real_distribution, real_pre_tanh)
+            + _squashed_normal_log_prob(imag_distribution, imag_pre_tanh)
+        )
+        normalized_entropy = (
+            real_distribution.entropy().sum(dim=-1)
+            + imag_distribution.entropy().sum(dim=-1)
+        ) / self.continuous_dim
+        return log_prob, normalized_entropy
+
+    def to_env_action(self, continuous):
+        continuous = (
+            continuous.detach().cpu().reshape(-1).numpy().astype(np.float32)
+        )
+        if continuous.size != self.continuous_dim:
+            raise ValueError("to_env_action expects one satellite action")
+        real, imag = np.split(continuous, 2)
+        return {
+            "sat_beam_real": real,
+            "sat_beam_imag": imag,
+        }
+
+
+class HAPSRISActor(nn.Module):
+    """HAPS-RIS policy with per-element mode and complex phase heads."""
+
+    def __init__(
+        self,
+        actor_dim,
+        risk_shape,
+        edge_index,
+        risk_grid_size,
+        num_ris_elements,
+        hidden_dim=256,
+        risk_hidden_dim=64,
+        risk_feature_dim=64,
+    ):
+        super().__init__()
+        self.actor_dim = int(actor_dim)
+        self.num_elements = int(num_ris_elements)
+        if self.num_elements <= 0:
+            raise ValueError("num_ris_elements must be positive")
+
+        self.continuous_action_shapes = {
+            "ris_phase_real": (self.num_elements,),
+            "ris_phase_imag": (self.num_elements,),
+        }
+        self.continuous_dim = 2 * self.num_elements
+        self.mode_dim = self.num_elements
+        self.feature_extractor = _ActorFeatureExtractor(
+            actor_dim=self.actor_dim,
+            risk_shape=risk_shape,
+            edge_index=edge_index,
+            risk_grid_size=risk_grid_size,
+            hidden_dim=hidden_dim,
+            risk_hidden_dim=risk_hidden_dim,
+            risk_feature_dim=risk_feature_dim,
+        )
+        self.mode_head = nn.Linear(hidden_dim, self.num_elements)
+        self.phase_real_head = nn.Linear(hidden_dim, self.num_elements)
+        self.phase_imag_head = nn.Linear(hidden_dim, self.num_elements)
+        self.phase_real_log_std = nn.Parameter(
+            torch.full((self.num_elements,), -0.5)
+        )
+        self.phase_imag_log_std = nn.Parameter(
+            torch.full((self.num_elements,), -0.5)
+        )
+
+    @staticmethod
+    def _normal(mean, log_std):
+        std = log_std.clamp(-5.0, 2.0).exp().expand_as(mean)
+        return Normal(mean, std)
+
+    def _distributions(self, vector, risk_nodes):
+        hidden = self.feature_extractor(vector, risk_nodes)
+        mode = Bernoulli(logits=self.mode_head(hidden))
+        phase_real = self._normal(
+            self.phase_real_head(hidden), self.phase_real_log_std
+        )
+        phase_imag = self._normal(
+            self.phase_imag_head(hidden), self.phase_imag_log_std
+        )
+        return mode, phase_real, phase_imag
+
+    def sample(self, vector, risk_nodes, deterministic=False):
+        mode_distribution, real_distribution, imag_distribution = (
+            self._distributions(vector, risk_nodes)
+        )
+        if deterministic:
+            mode = (mode_distribution.probs >= 0.5).float()
+            real_pre_tanh = real_distribution.mean
+            imag_pre_tanh = imag_distribution.mean
+        else:
+            mode = mode_distribution.sample()
+            real_pre_tanh = real_distribution.rsample()
+            imag_pre_tanh = imag_distribution.rsample()
+
+        pre_tanh = torch.cat((real_pre_tanh, imag_pre_tanh), dim=-1)
+        continuous = torch.tanh(pre_tanh)
+        log_prob = (
+            mode_distribution.log_prob(mode).sum(dim=-1)
+            + _squashed_normal_log_prob(real_distribution, real_pre_tanh)
+            + _squashed_normal_log_prob(imag_distribution, imag_pre_tanh)
+        )
         return continuous, mode, pre_tanh, log_prob
 
-
     def evaluate(self, vector, risk_nodes, pre_tanh, mode):
-        """评估给定动作的对数概率和熵。"""
-        normal, bernoulli = self._distribution(vector, risk_nodes)
-        device = self.log_std.device
-        #pre_tanh表示连续动作在tanh变换之前的值，mode表示离散动作的选择
-        pre_tanh = torch.as_tensor(pre_tanh, dtype=torch.float32, device=device)
+        mode_distribution, real_distribution, imag_distribution = (
+            self._distributions(vector, risk_nodes)
+        )
+        device = self.phase_real_log_std.device
+        pre_tanh = torch.as_tensor(
+            pre_tanh, dtype=torch.float32, device=device
+        )
         mode = torch.as_tensor(mode, dtype=torch.float32, device=device)
+        if pre_tanh.ndim == 1:
+            pre_tanh = pre_tanh.unsqueeze(0)
+        if mode.ndim == 1:
+            mode = mode.unsqueeze(0)
+        if pre_tanh.ndim != 2 or pre_tanh.shape[1] != self.continuous_dim:
+            raise ValueError(
+                f"pre_tanh must have shape (B, {self.continuous_dim})"
+            )
+        expected_mode_shape = (pre_tanh.shape[0], self.mode_dim)
+        if tuple(mode.shape) != expected_mode_shape:
+            raise ValueError(f"mode must have shape {expected_mode_shape}")
+        if pre_tanh.shape[0] != real_distribution.mean.shape[0]:
+            raise ValueError("actions and observations must have the same batch size")
 
-        log_prob = self._joint_log_prob(normal, bernoulli, pre_tanh, mode)
-        entropy_approx = (normal.entropy().sum(dim=-1) + bernoulli.entropy().sum(dim=-1))
-
-        return log_prob, entropy_approx
-
+        real_pre_tanh, imag_pre_tanh = pre_tanh.split(
+            self.num_elements, dim=-1
+        )
+        log_prob = (
+            mode_distribution.log_prob(mode).sum(dim=-1)
+            + _squashed_normal_log_prob(real_distribution, real_pre_tanh)
+            + _squashed_normal_log_prob(imag_distribution, imag_pre_tanh)
+        )
+        normalized_entropy = (
+            mode_distribution.entropy().sum(dim=-1)
+            + real_distribution.entropy().sum(dim=-1)
+            + imag_distribution.entropy().sum(dim=-1)
+        ) / (self.mode_dim + self.continuous_dim)
+        return log_prob, normalized_entropy
 
     def to_env_action(self, continuous, mode):
-        """ 将连续和离散动作转换为环境可接受的格式。"""
-        continuous = continuous.detach().cpu().reshape(-1)
-        continuous = continuous.numpy().astype(np.float32)
-
-        mode = mode.detach().cpu().reshape(-1)
-        mode = mode.numpy().round().astype(np.int8)
-
-        if continuous.size != self.continuous_dim or mode.size != self.G:
-            raise ValueError("to_env_action expects one action")
-
-        blocks = {
-            name: continuous[self.continuous_action_slices[name]].reshape(shape)
-            for name, shape in self.continuous_action_shapes.items()
-        }
-
+        continuous = (
+            continuous.detach().cpu().reshape(-1).numpy().astype(np.float32)
+        )
+        mode = (
+            mode.detach().cpu().reshape(-1).numpy().round().astype(np.int8)
+        )
+        if continuous.size != self.continuous_dim or mode.size != self.mode_dim:
+            raise ValueError("to_env_action expects one HAPS-RIS action")
+        real, imag = np.split(continuous, 2)
         return {
-            "uav_move": blocks["uav_move"],
-            "ris_orientation_delta": blocks["ris_orientation_delta"],
-            "ris_group_mode": mode,
-            "ris_amplitude_residual": blocks["ris_amplitude_residual"],
-            "ris_phase_residual": blocks["ris_phase_residual"],
+            "ris_element_mode": mode,
+            "ris_phase_real": real,
+            "ris_phase_imag": imag,
         }
-    

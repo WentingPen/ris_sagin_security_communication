@@ -45,53 +45,80 @@ class LiveTrainingPlotter:
         self.interactive = bool(interactive)
 
         self.episodes = []
-        self.returns = []
-        self.return_mean = []
         self.sops = []
         self.sop_mean = []
+        self.returns = []
+        self.return_mean = []
+        self.max_bob_capacities = []
+        self.max_bob_capacity_mean = []
+        self.max_eve_capacities = []
+        self.max_eve_capacity_mean = []
         self.loss_episode = []
-        self.actor_losses = []
+        self.satellite_actor_losses = []
+        self.haps_ris_actor_losses = []
         self.critic_losses = []
 
         if self.interactive:
             plt.ion()
-        self.figure, axes = plt.subplots(2, 2, figsize=(13, 8))
-        self.reward_axis, self.sop_axis = axes[0]
-        self.actor_axis, self.critic_axis = axes[1]
+        self.figure, axes = plt.subplots(3, 2, figsize=(14, 11))
+        self.actor_axis, self.critic_axis = axes[0]
+        self.sop_axis, self.reward_axis = axes[1]
+        self.bob_capacity_axis, self.eve_capacity_axis = axes[2]
 
-        self.reward_raw, = self.reward_axis.plot(
-            [], [], alpha=0.3, color="tab:blue", label="raw"
+        self.satellite_actor_line, = self.actor_axis.plot(
+            [], [], color="tab:blue", marker="o", markersize=3,
+            label="Satellite",
         )
-        self.reward_avg, = self.reward_axis.plot(
-            [], [], color="tab:blue", label="moving average"
-        )
-        self.sop_raw, = self.sop_axis.plot(
-            [], [], alpha=0.3, color="tab:red", label="raw"
-        )
-        self.sop_avg, = self.sop_axis.plot(
-            [], [], color="tab:red", label="moving average"
-        )
-        self.actor_line, = self.actor_axis.plot(
-            [], [], color="tab:green", marker="o", markersize=3
+        self.haps_ris_actor_line, = self.actor_axis.plot(
+            [], [], color="tab:orange", marker="o", markersize=3,
+            label="HAPS-RIS",
         )
         self.critic_line, = self.critic_axis.plot(
             [], [], color="tab:purple", marker="o", markersize=3
         )
+        self.sop_raw, = self.sop_axis.plot(
+            [], [], alpha=0.3, color="tab:green", label="raw"
+        )
+        self.sop_avg, = self.sop_axis.plot(
+            [], [], color="tab:green", label="moving average"
+        )
+        self.reward_raw, = self.reward_axis.plot(
+            [], [], alpha=0.3, color="tab:red", label="raw"
+        )
+        self.reward_avg, = self.reward_axis.plot(
+            [], [], color="tab:red", label="moving average"
+        )
+        self.bob_capacity_raw, = self.bob_capacity_axis.plot(
+            [], [], alpha=0.3, color="tab:cyan", label="raw"
+        )
+        self.bob_capacity_avg, = self.bob_capacity_axis.plot(
+            [], [], color="tab:cyan", label="moving average"
+        )
+        self.eve_capacity_raw, = self.eve_capacity_axis.plot(
+            [], [], alpha=0.3, color="tab:pink", label="raw"
+        )
+        self.eve_capacity_avg, = self.eve_capacity_axis.plot(
+            [], [], color="tab:pink", label="moving average"
+        )
 
-        self.reward_axis.set_title("Episode Return")
-        self.sop_axis.set_title("Episode SOP")
         self.actor_axis.set_title("Actor Loss per PPO Update")
         self.critic_axis.set_title("Critic Loss per PPO Update")
+        self.sop_axis.set_title("Episode SOP")
+        self.reward_axis.set_title("Episode Return")
+        self.bob_capacity_axis.set_title("Mean Step-Max Bob Capacity per Episode")
+        self.eve_capacity_axis.set_title("Mean Step-Max Eve Capacity per Episode")
 
         for axis in axes.ravel():
             axis.set_xlabel("Completed episodes")
             axis.grid(alpha=0.25)
 
-        self.reward_axis.set_ylabel("Return")
-        self.sop_axis.set_ylabel("SOP")
         self.actor_axis.set_ylabel("Actor loss")
         self.critic_axis.set_ylabel("Critic loss")
+        self.sop_axis.set_ylabel("SOP")
         self.sop_axis.set_ylim(-0.02, 1.02)
+        self.reward_axis.set_ylabel("Return")
+        self.bob_capacity_axis.set_ylabel("Capacity (bit/s/Hz)")
+        self.eve_capacity_axis.set_ylabel("Capacity (bit/s/Hz)")
         waiting_message = "Waiting for the first PPO update"
         self.actor_waiting = self.actor_axis.text(
             0.5,
@@ -111,8 +138,11 @@ class LiveTrainingPlotter:
             transform=self.critic_axis.transAxes,
             color="0.45",
         )
-        self.reward_axis.legend()
+        self.actor_axis.legend()
         self.sop_axis.legend()
+        self.reward_axis.legend()
+        self.bob_capacity_axis.legend()
+        self.eve_capacity_axis.legend()
         self.figure.tight_layout()
         if self.interactive:
             plt.show(block=False)
@@ -122,21 +152,39 @@ class LiveTrainingPlotter:
 
     def on_episode(self, event):
         self.episodes.append(event["episode"])
-        self.returns.append(event["return"])
         self.sops.append(event["outage_rate"])
-        self.return_mean.append(
-            float(np.mean(self.returns[-self.smooth_window:]))
-        )
+        self.returns.append(event["return"])
+        self.max_bob_capacities.append(event["max_bob_capacity"])
+        self.max_eve_capacities.append(event["max_eve_capacity"])
         self.sop_mean.append(
             float(np.mean(self.sops[-self.smooth_window:]))
         )
+        self.return_mean.append(
+            float(np.mean(self.returns[-self.smooth_window:]))
+        )
+        self.max_bob_capacity_mean.append(
+            float(np.mean(self.max_bob_capacities[-self.smooth_window:]))
+        )
+        self.max_eve_capacity_mean.append(
+            float(np.mean(self.max_eve_capacities[-self.smooth_window:]))
+        )
 
-        self.reward_raw.set_data(self.episodes, self.returns)
-        self.reward_avg.set_data(self.episodes, self.return_mean)
         self.sop_raw.set_data(self.episodes, self.sops)
         self.sop_avg.set_data(self.episodes, self.sop_mean)
+        self.reward_raw.set_data(self.episodes, self.returns)
+        self.reward_avg.set_data(self.episodes, self.return_mean)
+        self.bob_capacity_raw.set_data(self.episodes, self.max_bob_capacities)
+        self.bob_capacity_avg.set_data(
+            self.episodes, self.max_bob_capacity_mean
+        )
+        self.eve_capacity_raw.set_data(self.episodes, self.max_eve_capacities)
+        self.eve_capacity_avg.set_data(
+            self.episodes, self.max_eve_capacity_mean
+        )
+        self._rescale(self.sop_axis)
         self._rescale(self.reward_axis)
-        self._rescale(self.sop_axis, sop=True)
+        self._rescale(self.bob_capacity_axis)
+        self._rescale(self.eve_capacity_axis)
 
         if len(self.episodes) % self.draw_every == 0:
             self._draw()
@@ -148,11 +196,17 @@ class LiveTrainingPlotter:
 
     def on_update(self, metrics):
         self.loss_episode.append(metrics["total_episodes"])
-        self.actor_losses.append(metrics["actor_loss"])
+        self.satellite_actor_losses.append(metrics["satellite_actor_loss"])
+        self.haps_ris_actor_losses.append(metrics["haps_ris_actor_loss"])
         self.critic_losses.append(metrics["critic_loss"])
         self.actor_waiting.set_visible(False)
         self.critic_waiting.set_visible(False)
-        self.actor_line.set_data(self.loss_episode, self.actor_losses)
+        self.satellite_actor_line.set_data(
+            self.loss_episode, self.satellite_actor_losses
+        )
+        self.haps_ris_actor_line.set_data(
+            self.loss_episode, self.haps_ris_actor_losses
+        )
         self.critic_line.set_data(self.loss_episode, self.critic_losses)
         self._rescale(self.actor_axis)
         self._rescale(self.critic_axis)
@@ -161,11 +215,9 @@ class LiveTrainingPlotter:
             self.save()
 
     @staticmethod
-    def _rescale(axis, sop=False):
+    def _rescale(axis):
         axis.relim()
         axis.autoscale_view()
-        if sop:
-            axis.set_ylim(-0.02, 1.02)
 
     def _draw(self):
         if not self.interactive or not plt.fignum_exists(self.figure.number):
@@ -199,9 +251,16 @@ def main():
     num_updates = 1000
     system_params = get_system_params()
 
-    # Single-user example; replace these positions with the experiment setup.
-    sat_positions = np.array([[500.0, 0.0, 6000.0]])
-    uav_positions = np.array([[0.0, 0.0, system_params.uav_height]])
+    x_min, x_max, y_min, y_max = system_params.area_bounds
+    area_center = np.array([0.5 * (x_min + x_max), 0.5 * (y_min + y_max)])
+    sat_positions = np.array([[
+        area_center[0], area_center[1], system_params.satellite_height
+    ]])
+    uav_positions = np.array([[
+        system_params.ris_fixed_x,
+        system_params.ris_fixed_y,
+        system_params.uav_height,
+    ]])
     user_positions = np.array([[100.0, 0.0, system_params.ground_height]])
 
     env = SAGIN_ENV(
@@ -212,14 +271,18 @@ def main():
     )
     ppo_config = PPOConfig(
         episodes_per_update=8,
-        batch_size=400,
-        ppo_epochs=3,
+        batch_size=256,
+        ppo_epochs=2,
         gamma=0.99,
         gae_lambda=0.95,
         clip_coef=0.1,
-        entropy_coef=0.01,
-        actor_lr=3e-5,
-        critic_lr=3e-4,
+        entropy_coef=1e-3,
+        entropy_coef_final=1e-4,
+        entropy_anneal_updates=num_updates,
+        satellite_target_kl=0.01,
+        haps_ris_target_kl=0.02,
+        actor_lr=1e-5,
+        critic_lr=1e-4,
         max_grad_norm=0.5,
     )
     controller = Controller(
@@ -254,13 +317,18 @@ def main():
     episode_fields = [
         "episode", "env_steps", "policy_version", "return", "mean_reward",
         "length", "outage_rate", "num_eves", "mean_raw_security_gap",
-        "mean_bob_capacity", "mean_max_eve_capacity",
+        "mean_bob_capacity", "mean_max_eve_capacity", "max_bob_capacity",
+        "max_eve_capacity",
         "mean_bob_jammer_inr", "ris_repair_rate",
     ]
     update_fields = [
         "update", "total_episodes", "total_env_steps", "mean_episode_return",
-        "mean_outage_rate", "actor_loss", "critic_loss", "entropy",
-        "approx_kl", "clip_fraction",
+        "mean_outage_rate", "satellite_actor_loss", "haps_ris_actor_loss",
+        "actor_loss", "critic_loss", "satellite_entropy", "haps_ris_entropy",
+        "entropy", "satellite_approx_kl", "haps_ris_approx_kl", "approx_kl",
+        "satellite_clip_fraction", "haps_ris_clip_fraction", "clip_fraction",
+        "entropy_coef", "satellite_early_stop", "haps_ris_early_stop",
+        "satellite_stop_kl", "haps_ris_stop_kl",
     ]
     episode_file = episode_metrics_path.open("w", newline="", encoding="utf-8")
     update_file = update_metrics_path.open("w", newline="", encoding="utf-8")
@@ -268,9 +336,10 @@ def main():
     update_writer = csv.DictWriter(update_file, fieldnames=update_fields)
     episode_writer.writeheader()
     update_writer.writeheader()
+    episode_file.flush()
+    update_file.flush()
 
     def handle_episode(event):
-        plotter.on_episode(event)
         episode_writer.writerow({name: event[name] for name in episode_fields})
         episode_file.flush()
         print(
@@ -278,27 +347,41 @@ def main():
             f"return={event['return']:.4f} "
             f"mean_reward={event['mean_reward']:.4f} "
             f"SOP={event['outage_rate']:.4f} "
-            f"gap={event['mean_raw_security_gap']:.6f}",
+            f"gap={event['mean_raw_security_gap']:.6f} "
+            f"max_bob_C={event['max_bob_capacity']:.6f} "
+            f"max_eve_C={event['max_eve_capacity']:.6f}",
             flush=True,
         )
+        plotter.on_episode(event)
+        if event["episode"] % ppo_config.episodes_per_update == 0:
+            print(
+                "Rollout batch complete; starting PPO optimization...",
+                flush=True,
+            )
 
+    training_error = None
     try:
         for _ in range(num_updates):
             metrics = controller.update(
                 episode_callback=handle_episode
             )
-            plotter.on_update(metrics)
 
             temporary_checkpoint = checkpoint_path.with_suffix(".tmp")
             torch.save(
                 {
-                    "action_schema": "mrt_ris_group_residual_v1",
+                    "action_schema": "dual_agent_elementwise_complex_v1",
                     "update": controller.update_index,
                     "total_episodes": controller.total_episodes,
                     "total_env_steps": controller.total_env_steps,
-                    "actor": controller.actor.state_dict(),
+                    "satellite_actor": controller.satellite_actor.state_dict(),
+                    "haps_ris_actor": controller.haps_ris_actor.state_dict(),
                     "critic": controller.critic.state_dict(),
-                    "actor_optimizer": controller.actor_optimizer.state_dict(),
+                    "satellite_actor_optimizer": (
+                        controller.satellite_actor_optimizer.state_dict()
+                    ),
+                    "haps_ris_actor_optimizer": (
+                        controller.haps_ris_actor_optimizer.state_dict()
+                    ),
                     "critic_optimizer": controller.critic_optimizer.state_dict(),
                     "ppo_config": vars(ppo_config),
                     "system_params": vars(system_params),
@@ -314,15 +397,38 @@ def main():
                 f"episodes={metrics['total_episodes']:6d} "
                 f"return={metrics['mean_episode_return']:.4f} "
                 f"SOP={metrics['mean_outage_rate']:.4f} "
-                f"actor_loss={metrics['actor_loss']:.6f} "
+                f"sat_actor_loss={metrics['satellite_actor_loss']:.6f} "
+                f"haps_actor_loss={metrics['haps_ris_actor_loss']:.6f} "
                 f"critic_loss={metrics['critic_loss']:.6f} "
-                f"KL={metrics['approx_kl']:.6f}"
+                f"entropy_coef={metrics['entropy_coef']:.6f} "
+                f"sat_KL={metrics['satellite_approx_kl']:.6f} "
+                f"haps_KL={metrics['haps_ris_approx_kl']:.6f} "
+                f"KL_stop={int(metrics['satellite_early_stop'])}/"
+                f"{int(metrics['haps_ris_early_stop'])} "
+                f"stop_KL={metrics['satellite_stop_kl']:.6f}/"
+                f"{metrics['haps_ris_stop_kl']:.6f}",
+                flush=True,
             )
+            plotter.on_update(metrics)
 
+    except BaseException as error:
+        training_error = error
+        raise
     finally:
         episode_file.close()
         update_file.close()
-        plotter.finish()
+        if training_error is None:
+            plotter.finish()
+        else:
+            try:
+                plotter.finish()
+            except Exception as finish_error:
+                print(
+                    "Training failed and the final plot could not be saved: "
+                    f"{finish_error}",
+                    file=sys.stderr,
+                    flush=True,
+                )
 
 
 if __name__ == "__main__":

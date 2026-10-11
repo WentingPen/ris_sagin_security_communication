@@ -8,13 +8,14 @@ class _GraphConv(nn.Module):
         self.linear = nn.Linear(input_dim, output_dim, bias=False)
         self.bias = nn.Parameter(torch.zeros(output_dim))
 
-    def forward(self, nodes, source, target, edge_weight):
+    def forward(self, nodes, adjacency):
         projected = self.linear(nodes)
-        messages = projected.index_select(1, source)
-        messages = messages * edge_weight.view(1, -1, 1)
-
-        output = projected.new_zeros(projected.shape)
-        output.index_add_(1, target, messages)
+        batch_size, num_nodes, hidden_dim = projected.shape
+        flattened = projected.permute(1, 0, 2).reshape(
+            num_nodes, batch_size * hidden_dim
+        )
+        output = torch.sparse.mm(adjacency, flattened)
+        output = output.reshape(num_nodes, batch_size, hidden_dim).permute(1, 0, 2)
         return output + self.bias
 
 class RiskGNN(nn.Module):
@@ -59,9 +60,13 @@ class RiskGNN(nn.Module):
 
         node_xy = torch.stack((xx.reshape(-1), yy.reshape(-1)), dim=-1)
 
-        self.register_buffer("source", source)
-        self.register_buffer("target", target)
-        self.register_buffer("edge_weight", edge_weight)
+        with torch.sparse.check_sparse_tensor_invariants():
+            adjacency = torch.sparse_coo_tensor(
+                torch.stack((target, source)),
+                edge_weight,
+                size=(self.num_nodes, self.num_nodes),
+            ).coalesce()
+        self.register_buffer("adjacency", adjacency)
         self.register_buffer("node_xy", node_xy)
 
         self.conv1 = _GraphConv(self.node_dim + 2, hidden_dim)
@@ -90,17 +95,13 @@ class RiskGNN(nn.Module):
 
         hidden = self.conv1(
             hidden,
-            self.source,
-            self.target,
-            self.edge_weight,
+            self.adjacency,
         )
         hidden = F.relu(self.norm1(hidden))
 
         hidden = self.conv2(
             hidden,
-            self.source,
-            self.target,
-            self.edge_weight,
+            self.adjacency,
         )
         hidden = F.relu(self.norm2(hidden))
 
