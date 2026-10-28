@@ -256,6 +256,45 @@ class SAGIN_ENV(gym.Env):
             raise
         return observation, reward, terminated, truncated, info
 
+    def get_phase_only_reference(self):
+        """Return the normalized MRT action and Bob-coherent RIS base phase."""
+        if not self._ready:
+            raise RuntimeError("call reset() before requesting a phase reference")
+
+        direct_channel = self.bobs[0].direct_channel
+        channel_norm = float(np.linalg.norm(direct_channel))
+        if channel_norm <= 1e-15:
+            raise RuntimeError("the direct Bob channel is too small for MRT")
+
+        unit_beam = np.conj(direct_channel) / channel_norm
+        satellite_continuous = np.r_[unit_beam.real, unit_beam.imag].astype(np.float32)
+        return satellite_continuous, self.get_ris_phase_reference(satellite_continuous)
+
+    def get_ris_phase_reference(self, satellite_continuous):
+        """Align RIS elements with Bob's direct signal for the executed beam."""
+        if not self._ready:
+            raise RuntimeError("call reset() before requesting a phase reference")
+
+        num_antennas = self.satellite.num_sat_antennas
+        satellite_continuous = _action_array(
+            satellite_continuous, (2 * num_antennas,), "satellite_continuous"
+        )
+        if np.any(np.abs(satellite_continuous) > 1.0):
+            raise ValueError("satellite_continuous must lie in [-1, 1]")
+        unit_beam = satellite_continuous[:num_antennas] + 1j * satellite_continuous[num_antennas:]
+        beam = np.sqrt(self.satellite.max_power) * unit_beam / max(float(np.linalg.norm(unit_beam)), 1.0)
+        direct_signal = self.bobs[0].direct_channel @ beam
+        reflected_terms = self.bobs[0].ris_channel * (
+            self.h_sat_ris @ beam
+        )
+        base_phase = np.zeros(self.uav_ris.num_elements, dtype=float)
+        nonzero = np.abs(reflected_terms) > 1e-30
+        base_phase[nonzero] = (
+            np.angle(direct_signal) - np.angle(reflected_terms[nonzero])
+        )
+        base_phase = (base_phase + np.pi) % (2.0 * np.pi) - np.pi
+        return base_phase
+
     def _validate_action(self, action):
         """验证给定的动作字典是否包含所有必需的键，并将其转换为适当的数组形状."""
         if not isinstance(action, Mapping): #mapping是一个抽象基类，表示键值对的集合，类似于字典

@@ -89,6 +89,7 @@ class SatelliteActor(nn.Module):
             "sat_beam_real": (self.num_antennas,),
             "sat_beam_imag": (self.num_antennas,),
         }
+        self.env_action_shapes = dict(self.continuous_action_shapes)
         self.continuous_dim = 2 * self.num_antennas
         self.feature_extractor = _ActorFeatureExtractor(
             actor_dim=self.actor_dim,
@@ -186,7 +187,7 @@ class SatelliteActor(nn.Module):
 
 
 class HAPSRISActor(nn.Module):
-    """HAPS-RIS policy with per-element mode and complex phase heads."""
+    """HAPS-RIS policy conditioned on the current satellite beam."""
 
     def __init__(
         self,
@@ -195,22 +196,51 @@ class HAPSRISActor(nn.Module):
         edge_index,
         risk_grid_size,
         num_ris_elements,
+        num_sat_antennas,
+        num_ris_groups,
+        element_to_group,
         hidden_dim=256,
         risk_hidden_dim=64,
         risk_feature_dim=64,
+        phase_only_training=False,
+        phase_log_std_init=-0.5,
+        phase_residual_max_deg=30.0,
     ):
         super().__init__()
         self.actor_dim = int(actor_dim)
         self.num_elements = int(num_ris_elements)
-        if self.num_elements <= 0:
-            raise ValueError("num_ris_elements must be positive")
+        self.num_sat_antennas = int(num_sat_antennas)
+        self.num_groups = int(num_ris_groups)
+        self.element_to_group = np.array(
+            element_to_group, dtype=np.int64, copy=True
+        )
+        self.phase_only_training = bool(phase_only_training)
+        self.phase_residual_max = np.radians(float(phase_residual_max_deg))
+        if min(self.num_elements, self.num_sat_antennas, self.num_groups) <= 0:
+            raise ValueError(
+                "num_ris_elements, num_sat_antennas, and num_ris_groups "
+                "must be positive"
+            )
+        if self.element_to_group.shape != (self.num_elements,) or not np.array_equal(
+            np.unique(self.element_to_group), np.arange(self.num_groups)
+        ):
+            raise ValueError("element_to_group must map every element to a RIS group")
+        if not np.isfinite(phase_log_std_init):
+            raise ValueError("phase_log_std_init must be finite")
+        if not 0.0 < self.phase_residual_max <= np.pi:
+            raise ValueError("phase_residual_max_deg must lie in (0, 180]")
 
         self.continuous_action_shapes = {
+            "ris_group_phase": (self.num_groups,),
+        }
+        self.env_action_shapes = {
+            "ris_element_mode": (self.num_elements,),
             "ris_phase_real": (self.num_elements,),
             "ris_phase_imag": (self.num_elements,),
         }
-        self.continuous_dim = 2 * self.num_elements
-        self.mode_dim = self.num_elements
+        self.continuous_dim = self.num_groups
+        self.mode_dim = self.num_groups
+        self.satellite_condition_dim = 2 * self.num_sat_antennas
         self.feature_extractor = _ActorFeatureExtractor(
             actor_dim=self.actor_dim,
             risk_shape=risk_shape,
@@ -220,59 +250,113 @@ class HAPSRISActor(nn.Module):
             risk_hidden_dim=risk_hidden_dim,
             risk_feature_dim=risk_feature_dim,
         )
-        self.mode_head = nn.Linear(hidden_dim, self.num_elements)
-        self.phase_real_head = nn.Linear(hidden_dim, self.num_elements)
-        self.phase_imag_head = nn.Linear(hidden_dim, self.num_elements)
-        self.phase_real_log_std = nn.Parameter(
-            torch.full((self.num_elements,), -0.5)
+        head_input_dim = hidden_dim + self.satellite_condition_dim
+        self.conditioning_net = nn.Sequential(
+            nn.Linear(head_input_dim, hidden_dim),
+            nn.Tanh(),
         )
-        self.phase_imag_log_std = nn.Parameter(
-            torch.full((self.num_elements,), -0.5)
+        self.mode_head = nn.Linear(hidden_dim, self.num_groups)
+        self.phase_head = nn.Linear(hidden_dim, self.num_groups)
+        self.phase_log_std = nn.Parameter(
+            torch.full((self.num_groups,), float(phase_log_std_init))
         )
+        nn.init.zeros_(self.phase_head.weight)
+        nn.init.zeros_(self.phase_head.bias)
+        if self.phase_only_training:
+            for parameter in self.mode_head.parameters():
+                parameter.requires_grad_(False)
 
     @staticmethod
     def _normal(mean, log_std):
         std = log_std.clamp(-5.0, 2.0).exp().expand_as(mean)
         return Normal(mean, std)
 
-    def _distributions(self, vector, risk_nodes):
-        hidden = self.feature_extractor(vector, risk_nodes)
-        mode = Bernoulli(logits=self.mode_head(hidden))
-        phase_real = self._normal(
-            self.phase_real_head(hidden), self.phase_real_log_std
+    def satellite_beam_condition(self, satellite_continuous):
+        device = self.phase_log_std.device
+        satellite_continuous = torch.as_tensor(
+            satellite_continuous,
+            dtype=torch.float32,
+            device=device,
         )
-        phase_imag = self._normal(
-            self.phase_imag_head(hidden), self.phase_imag_log_std
+        if satellite_continuous.ndim == 1:
+            satellite_continuous = satellite_continuous.unsqueeze(0)
+        if (
+            satellite_continuous.ndim != 2
+            or satellite_continuous.shape[1] != self.satellite_condition_dim
+        ):
+            raise ValueError(
+                "satellite_continuous must have shape "
+                f"(B, {self.satellite_condition_dim})"
+            )
+        norm = torch.linalg.vector_norm(
+            satellite_continuous, dim=-1, keepdim=True
         )
-        return mode, phase_real, phase_imag
+        return satellite_continuous / norm.clamp_min(1.0)
 
-    def sample(self, vector, risk_nodes, deterministic=False):
-        mode_distribution, real_distribution, imag_distribution = (
-            self._distributions(vector, risk_nodes)
+    def _distributions(self, vector, risk_nodes, satellite_continuous):
+        hidden = self.feature_extractor(vector, risk_nodes)
+        satellite_beam = self.satellite_beam_condition(
+            satellite_continuous
+        )
+        if hidden.shape[0] != satellite_beam.shape[0]:
+            raise ValueError(
+                "observations and satellite_continuous must have the same "
+                "batch size"
+            )
+        conditioned_hidden = self.conditioning_net(
+            torch.cat((hidden, satellite_beam), dim=-1)
+        )
+        mode = Bernoulli(logits=self.mode_head(conditioned_hidden))
+        phase = self._normal(
+            self.phase_head(conditioned_hidden), self.phase_log_std
+        )
+        return mode, phase
+
+    def sample(
+        self,
+        vector,
+        risk_nodes,
+        satellite_continuous,
+        deterministic=False,
+    ):
+        mode_distribution, phase_distribution = self._distributions(
+            vector, risk_nodes, satellite_continuous
         )
         if deterministic:
-            mode = (mode_distribution.probs >= 0.5).float()
-            real_pre_tanh = real_distribution.mean
-            imag_pre_tanh = imag_distribution.mean
+            mode = (
+                torch.zeros_like(mode_distribution.probs)
+                if self.phase_only_training
+                else (mode_distribution.probs >= 0.5).float()
+            )
+            pre_tanh = phase_distribution.mean
         else:
-            mode = mode_distribution.sample()
-            real_pre_tanh = real_distribution.rsample()
-            imag_pre_tanh = imag_distribution.rsample()
+            mode = (
+                torch.zeros_like(mode_distribution.probs)
+                if self.phase_only_training
+                else mode_distribution.sample()
+            )
+            pre_tanh = phase_distribution.rsample()
 
-        pre_tanh = torch.cat((real_pre_tanh, imag_pre_tanh), dim=-1)
         continuous = torch.tanh(pre_tanh)
-        log_prob = (
-            mode_distribution.log_prob(mode).sum(dim=-1)
-            + _squashed_normal_log_prob(real_distribution, real_pre_tanh)
-            + _squashed_normal_log_prob(imag_distribution, imag_pre_tanh)
-        )
+        log_prob = _squashed_normal_log_prob(phase_distribution, pre_tanh)
+        if not self.phase_only_training:
+            log_prob = (
+                mode_distribution.log_prob(mode).sum(dim=-1) + log_prob
+            )
         return continuous, mode, pre_tanh, log_prob
 
-    def evaluate(self, vector, risk_nodes, pre_tanh, mode):
-        mode_distribution, real_distribution, imag_distribution = (
-            self._distributions(vector, risk_nodes)
+    def evaluate(
+        self,
+        vector,
+        risk_nodes,
+        satellite_continuous,
+        pre_tanh,
+        mode,
+    ):
+        mode_distribution, phase_distribution = self._distributions(
+            vector, risk_nodes, satellite_continuous
         )
-        device = self.phase_real_log_std.device
+        device = self.phase_log_std.device
         pre_tanh = torch.as_tensor(
             pre_tanh, dtype=torch.float32, device=device
         )
@@ -288,25 +372,28 @@ class HAPSRISActor(nn.Module):
         expected_mode_shape = (pre_tanh.shape[0], self.mode_dim)
         if tuple(mode.shape) != expected_mode_shape:
             raise ValueError(f"mode must have shape {expected_mode_shape}")
-        if pre_tanh.shape[0] != real_distribution.mean.shape[0]:
+        if self.phase_only_training and torch.any(mode != 0.0):
+            raise ValueError("phase-only training requires every RIS mode to be passive")
+        if pre_tanh.shape[0] != phase_distribution.mean.shape[0]:
             raise ValueError("actions and observations must have the same batch size")
 
-        real_pre_tanh, imag_pre_tanh = pre_tanh.split(
-            self.num_elements, dim=-1
+        log_prob = _squashed_normal_log_prob(
+            phase_distribution, pre_tanh
         )
-        log_prob = (
-            mode_distribution.log_prob(mode).sum(dim=-1)
-            + _squashed_normal_log_prob(real_distribution, real_pre_tanh)
-            + _squashed_normal_log_prob(imag_distribution, imag_pre_tanh)
-        )
-        normalized_entropy = (
-            mode_distribution.entropy().sum(dim=-1)
-            + real_distribution.entropy().sum(dim=-1)
-            + imag_distribution.entropy().sum(dim=-1)
-        ) / (self.mode_dim + self.continuous_dim)
+        normalized_entropy = phase_distribution.entropy().sum(
+            dim=-1
+        ) / self.continuous_dim
+        if not self.phase_only_training:
+            log_prob = (
+                mode_distribution.log_prob(mode).sum(dim=-1) + log_prob
+            )
+            normalized_entropy = (
+                mode_distribution.entropy().sum(dim=-1)
+                + phase_distribution.entropy().sum(dim=-1)
+            ) / (self.mode_dim + self.continuous_dim)
         return log_prob, normalized_entropy
 
-    def to_env_action(self, continuous, mode):
+    def to_env_action(self, continuous, mode, base_phase):
         continuous = (
             continuous.detach().cpu().reshape(-1).numpy().astype(np.float32)
         )
@@ -315,9 +402,16 @@ class HAPSRISActor(nn.Module):
         )
         if continuous.size != self.continuous_dim or mode.size != self.mode_dim:
             raise ValueError("to_env_action expects one HAPS-RIS action")
-        real, imag = np.split(continuous, 2)
+        base_phase = np.asarray(base_phase, dtype=float).reshape(-1)
+        if base_phase.size != self.num_elements or not np.all(np.isfinite(base_phase)):
+            raise ValueError(
+                "base_phase must contain one finite value per RIS element"
+            )
+        if self.phase_only_training:
+            mode = np.zeros(self.num_groups, dtype=np.int8)
+        phase = base_phase + self.phase_residual_max * continuous[self.element_to_group]
         return {
-            "ris_element_mode": mode,
-            "ris_phase_real": real,
-            "ris_phase_imag": imag,
+            "ris_element_mode": mode[self.element_to_group],
+            "ris_phase_real": np.cos(phase).astype(np.float32),
+            "ris_phase_imag": np.sin(phase).astype(np.float32),
         }

@@ -23,11 +23,16 @@ class PPOConfig:
     satellite_target_kl: float = 0.01
     haps_ris_target_kl: float = 0.02
     actor_lr: float = 1e-5
+    haps_ris_actor_lr: float | None = None
     critic_lr: float = 1e-4
     max_grad_norm: float = 0.5
     hidden_dim: int = 256
     risk_hidden_dim: int = 64
     risk_feature_dim: int = 64
+    phase_only_training: bool = False
+    fixed_csi_seed: int | None = None
+    phase_log_std_init: float = -0.5
+    phase_residual_max_deg: float = 30.0
 
 
 class Controller:
@@ -40,6 +45,12 @@ class Controller:
         )
 
         base_seed = int(env.params.seed if seed is None else seed)
+        if self.config.phase_only_training:
+            base_seed = int(
+                base_seed
+                if self.config.fixed_csi_seed is None
+                else self.config.fixed_csi_seed
+            )
         torch.manual_seed(base_seed)
         initial_state = env.reset(seed=base_seed)
         observation, info = initial_state
@@ -62,7 +73,16 @@ class Controller:
         self.haps_ris_actor = HAPSRISActor(
             **common_actor_arguments,
             num_ris_elements=params.num_ris_elements,
+            num_sat_antennas=params.num_sat_antennas,
+            num_ris_groups=params.num_ris_groups,
+            element_to_group=env.uav_ris.element_to_group,
+            phase_only_training=self.config.phase_only_training,
+            phase_log_std_init=self.config.phase_log_std_init,
+            phase_residual_max_deg=self.config.phase_residual_max_deg,
         ).to(self.device)
+        if self.config.phase_only_training:
+            for parameter in self.satellite_actor.parameters():
+                parameter.requires_grad_(False)
         self.critic = PrivilegeCritic(
             critic_dim=env.critic_vector_dim,
             risk_shape=risk_shape,
@@ -81,12 +101,26 @@ class Controller:
             critic=self.critic,
             episodes_per_update=self.config.episodes_per_update,
             initial_state=initial_state,
+            phase_only_training=self.config.phase_only_training,
+            fixed_csi_seed=(
+                base_seed if self.config.phase_only_training else None
+            ),
         )
         self.satellite_actor_optimizer = torch.optim.Adam(
             self.satellite_actor.parameters(), lr=self.config.actor_lr
         )
+        haps_ris_actor_lr = (
+            self.config.actor_lr
+            if self.config.haps_ris_actor_lr is None
+            else self.config.haps_ris_actor_lr
+        )
         self.haps_ris_actor_optimizer = torch.optim.Adam(
-            self.haps_ris_actor.parameters(), lr=self.config.actor_lr
+            (
+                parameter
+                for parameter in self.haps_ris_actor.parameters()
+                if parameter.requires_grad
+            ),
+            lr=haps_ris_actor_lr,
         )
         self.critic_optimizer = torch.optim.Adam(
             self.critic.parameters(), lr=self.config.critic_lr
@@ -105,6 +139,19 @@ class Controller:
             raise ValueError("satellite_target_kl must be positive")
         if self.config.haps_ris_target_kl <= 0.0:
             raise ValueError("haps_ris_target_kl must be positive")
+        haps_ris_actor_lr = (
+            self.config.actor_lr
+            if self.config.haps_ris_actor_lr is None
+            else self.config.haps_ris_actor_lr
+        )
+        if min(self.config.actor_lr, haps_ris_actor_lr, self.config.critic_lr) <= 0.0:
+            raise ValueError("optimizer learning rates must be positive")
+        if not math.isfinite(self.config.phase_log_std_init):
+            raise ValueError("phase_log_std_init must be finite")
+        if not 0.0 < self.config.phase_residual_max_deg <= 180.0:
+            raise ValueError("phase_residual_max_deg must lie in (0, 180]")
+        if self.config.fixed_csi_seed is not None and self.config.fixed_csi_seed < 0:
+            raise ValueError("fixed_csi_seed must be non-negative")
 
     def _current_entropy_coef(self):
         if self.config.entropy_anneal_updates == 1:
@@ -188,9 +235,8 @@ class Controller:
             )
 
         expected_action_shapes = {
-            **self.satellite_actor.continuous_action_shapes,
-            **self.haps_ris_actor.continuous_action_shapes,
-            "ris_element_mode": (self.haps_ris_actor.mode_dim,),
+            **self.satellite_actor.env_action_shapes,
+            **self.haps_ris_actor.env_action_shapes,
         }
         action_spaces = getattr(self.env.action_space, "spaces", None)
         if action_spaces is None:
@@ -223,14 +269,37 @@ class Controller:
                 )
 
         with torch.no_grad():
-            (
-                satellite_continuous,
-                satellite_pre_tanh,
-                satellite_log_prob,
-            ) = self.satellite_actor.sample(
-                observation["vector"],
-                observation["risk_nodes"],
-                deterministic=True,
+            base_phase = None
+            if self.config.phase_only_training:
+                satellite_continuous, base_phase = (
+                    self.env.get_phase_only_reference()
+                )
+                satellite_continuous = torch.as_tensor(
+                    satellite_continuous,
+                    dtype=torch.float32,
+                    device=self.device,
+                ).unsqueeze(0)
+                satellite_pre_tanh = torch.zeros_like(satellite_continuous)
+                satellite_log_prob = torch.zeros(
+                    1, dtype=torch.float32, device=self.device
+                )
+            else:
+                (
+                    satellite_continuous,
+                    satellite_pre_tanh,
+                    satellite_log_prob,
+                ) = self.satellite_actor.sample(
+                    observation["vector"],
+                    observation["risk_nodes"],
+                    deterministic=True,
+                )
+                base_phase = self.env.get_ris_phase_reference(
+                    satellite_continuous[0].detach().cpu().numpy()
+                )
+            satellite_condition = (
+                self.haps_ris_actor.satellite_beam_condition(
+                    satellite_continuous
+                )
             )
             (
                 haps_ris_continuous,
@@ -240,6 +309,7 @@ class Controller:
             ) = self.haps_ris_actor.sample(
                 observation["vector"],
                 observation["risk_nodes"],
+                satellite_condition,
                 deterministic=True,
             )
             self._require_shape(
@@ -254,6 +324,11 @@ class Controller:
             )
             self._require_shape(
                 satellite_log_prob, (1,), "satellite actor log_prob output"
+            )
+            self._require_shape(
+                satellite_condition,
+                (1, self.haps_ris_actor.satellite_condition_dim),
+                "satellite beam condition",
             )
             self._require_shape(
                 haps_ris_continuous,
@@ -279,7 +354,9 @@ class Controller:
             )
             action.update(
                 self.haps_ris_actor.to_env_action(
-                    haps_ris_continuous[0], ris_mode[0]
+                    haps_ris_continuous[0],
+                    ris_mode[0],
+                    base_phase=base_phase,
                 )
             )
             if not self.env.action_space.contains(action):
@@ -343,7 +420,10 @@ class Controller:
             gae_lambda=self.config.gae_lambda,
             episode_callback=handle_episode,
         )
-        self.satellite_actor.train()
+        if self.config.phase_only_training:
+            self.satellite_actor.eval()
+        else:
+            self.satellite_actor.train()
         self.haps_ris_actor.train()
         self.critic.train()
 
@@ -370,7 +450,10 @@ class Controller:
             ):
                 count = batch["advantage"].numel()
 
-                if not satellite_early_stop:
+                if (
+                    not self.config.phase_only_training
+                    and not satellite_early_stop
+                ):
                     satellite_log_prob, satellite_entropy = (
                         self.satellite_actor.evaluate(
                             batch["actor_vector"],
@@ -419,6 +502,7 @@ class Controller:
                         self.haps_ris_actor.evaluate(
                             batch["actor_vector"],
                             batch["risk_nodes"],
+                            batch["satellite_condition"],
                             batch["haps_ris_pre_tanh"],
                             batch["ris_mode"],
                         )
@@ -474,49 +558,63 @@ class Controller:
                 critic_loss_total += critic_loss.item() * count
                 critic_sample_count += count
 
-        if min(
-            satellite_sample_count,
-            haps_ris_sample_count,
-            critic_sample_count,
-        ) == 0:
+        if haps_ris_sample_count == 0 or critic_sample_count == 0:
             raise RuntimeError("PPO update received no rollout samples")
+        if (
+            not self.config.phase_only_training
+            and satellite_sample_count == 0
+        ):
+            raise RuntimeError("PPO update received no satellite samples")
 
-        satellite_metrics = {
-            name: value / satellite_sample_count
-            for name, value in satellite_totals.items()
-        }
+        if self.config.phase_only_training:
+            satellite_metrics = dict.fromkeys(satellite_totals, 0.0)
+        else:
+            satellite_metrics = {
+                name: value / satellite_sample_count
+                for name, value in satellite_totals.items()
+            }
         haps_ris_metrics = {
             name: value / haps_ris_sample_count
             for name, value in haps_ris_totals.items()
         }
         self.update_index += 1
+        if self.config.phase_only_training:
+            combined_actor_loss = haps_ris_metrics["actor_loss"]
+            combined_entropy = haps_ris_metrics["entropy"]
+            combined_kl = haps_ris_metrics["approx_kl"]
+            combined_clip_fraction = haps_ris_metrics["clip_fraction"]
+        else:
+            combined_actor_loss = 0.5 * (
+                satellite_metrics["actor_loss"]
+                + haps_ris_metrics["actor_loss"]
+            )
+            combined_entropy = 0.5 * (
+                satellite_metrics["entropy"]
+                + haps_ris_metrics["entropy"]
+            )
+            combined_kl = 0.5 * (
+                satellite_metrics["approx_kl"]
+                + haps_ris_metrics["approx_kl"]
+            )
+            combined_clip_fraction = 0.5 * (
+                satellite_metrics["clip_fraction"]
+                + haps_ris_metrics["clip_fraction"]
+            )
+
         result = {
             "satellite_actor_loss": satellite_metrics["actor_loss"],
             "haps_ris_actor_loss": haps_ris_metrics["actor_loss"],
-            "actor_loss": 0.5
-            * (
-                satellite_metrics["actor_loss"]
-                + haps_ris_metrics["actor_loss"]
-            ),
+            "actor_loss": combined_actor_loss,
             "critic_loss": critic_loss_total / critic_sample_count,
             "satellite_entropy": satellite_metrics["entropy"],
             "haps_ris_entropy": haps_ris_metrics["entropy"],
-            "entropy": 0.5
-            * (satellite_metrics["entropy"] + haps_ris_metrics["entropy"]),
+            "entropy": combined_entropy,
             "satellite_approx_kl": satellite_metrics["approx_kl"],
             "haps_ris_approx_kl": haps_ris_metrics["approx_kl"],
-            "approx_kl": 0.5
-            * (
-                satellite_metrics["approx_kl"]
-                + haps_ris_metrics["approx_kl"]
-            ),
+            "approx_kl": combined_kl,
             "satellite_clip_fraction": satellite_metrics["clip_fraction"],
             "haps_ris_clip_fraction": haps_ris_metrics["clip_fraction"],
-            "clip_fraction": 0.5
-            * (
-                satellite_metrics["clip_fraction"]
-                + haps_ris_metrics["clip_fraction"]
-            ),
+            "clip_fraction": combined_clip_fraction,
             "entropy_coef": entropy_coef,
             "satellite_early_stop": satellite_early_stop,
             "haps_ris_early_stop": haps_ris_early_stop,

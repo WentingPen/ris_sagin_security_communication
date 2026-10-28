@@ -1,0 +1,22 @@
+Traceback (most recent call last):
+  File "D:\desktop\Code\SecureCommunication\RIS_SAGIN_SecureCommunication\algorithm\ppo\main.py", line 603, in main
+    metrics = controller.update(
+              ^^^^^^^^^^^^^^^^^^
+  File "D:\desktop\Code\SecureCommunication\RIS_SAGIN_SecureCommunication\algorithm\ppo\Controller.py", line 418, in update
+    self.rollout.collect(
+  File "C:\Users\ASUS\.conda\envs\torch5070ti\Lib\site-packages\torch\utils\_contextlib.py", line 124, in decorate_context
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "D:\desktop\Code\SecureCommunication\RIS_SAGIN_SecureCommunication\algorithm\ppo\Rollout.py", line 339, in collect
+    episode_callback(dict(stats))
+  File "D:\desktop\Code\SecureCommunication\RIS_SAGIN_SecureCommunication\algorithm\ppo\Controller.py", line 416, in handle_episode
+    episode_callback(dict(event))
+  File "D:\desktop\Code\SecureCommunication\RIS_SAGIN_SecureCommunication\algorithm\ppo\main.py", line 593, in handle_episode
+    plotter.on_episode(event)
+  File "D:\desktop\Code\SecureCommunication\RIS_SAGIN_SecureCommunication\algorithm\ppo\main.py", line 369, in on_episode
+    self.save()
+  File "D:\desktop\Code\SecureCommunication\RIS_SAGIN_SecureCommunication\algorithm\ppo\main.py", line 412, in save
+    temporary_path.replace(path)
+  File "C:\Users\ASUS\.conda\envs\torch5070ti\Lib\pathlib.py", line 1188, in replace
+    os.replace(self, target)
+PermissionError: [WinError 5] 拒绝访问。: 'D:\\desktop\\Code\\SecureCommunication\\RIS_SAGIN_SecureCommunication\\algorithm\\ppo\\result\\2026-10-19_19-27-49\\.training_curves.tmp.png' -> 'D:\\desktop\\Code\\SecureCommunication\\RIS_SAGIN_SecureCommunication\\algorithm\\ppo\\result\\2026-10-19_19-27-49\\training_curves.png'

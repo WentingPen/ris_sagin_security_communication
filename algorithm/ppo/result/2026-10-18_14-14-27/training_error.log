@@ -1,0 +1,27 @@
+Traceback (most recent call last):
+  File "D:\desktop\Code\SecureCommunication\RIS_SAGIN_SecureCommunication\algorithm\ppo\main.py", line 596, in main
+    metrics = controller.update(
+              ^^^^^^^^^^^^^^^^^^
+  File "D:\desktop\Code\SecureCommunication\RIS_SAGIN_SecureCommunication\algorithm\ppo\Controller.py", line 414, in update
+    self.rollout.collect(
+  File "C:\Users\ASUS\.conda\envs\torch5070ti\Lib\site-packages\torch\utils\_contextlib.py", line 124, in decorate_context
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "D:\desktop\Code\SecureCommunication\RIS_SAGIN_SecureCommunication\algorithm\ppo\Rollout.py", line 195, in collect
+    ) = self.haps_ris_actor.sample(
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\desktop\Code\SecureCommunication\RIS_SAGIN_SecureCommunication\algorithm\ppo\actor.py", line 310, in sample
+    mode_distribution, phase_distribution = self._distributions(
+                                            ^^^^^^^^^^^^^^^^^^^^
+  File "D:\desktop\Code\SecureCommunication\RIS_SAGIN_SecureCommunication\algorithm\ppo\actor.py", line 298, in _distributions
+    phase = self._normal(
+            ^^^^^^^^^^^^^
+  File "D:\desktop\Code\SecureCommunication\RIS_SAGIN_SecureCommunication\algorithm\ppo\actor.py", line 260, in _normal
+    return Normal(mean, std)
+           ^^^^^^^^^^^^^^^^^
+  File "C:\Users\ASUS\.conda\envs\torch5070ti\Lib\site-packages\torch\distributions\normal.py", line 66, in __init__
+    super().__init__(batch_shape, validate_args=validate_args)
+  File "C:\Users\ASUS\.conda\envs\torch5070ti\Lib\site-packages\torch\distributions\distribution.py", line 76, in __init__
+    if not torch._is_all_true(valid):
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+KeyboardInterrupt

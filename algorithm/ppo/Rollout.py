@@ -14,6 +14,8 @@ class Rollout:
         critic,
         episodes_per_update=8,
         initial_state=None,
+        phase_only_training=False,
+        fixed_csi_seed=None,
     ):
         self.env = env
         self.satellite_actor = satellite_actor
@@ -23,6 +25,12 @@ class Rollout:
         if self.episodes_per_update <= 0:
             raise ValueError("episodes_per_update must be positive")
         self._pending_state = initial_state
+        self.phase_only_training = bool(phase_only_training)
+        self.fixed_csi_seed = (
+            None if fixed_csi_seed is None else int(fixed_csi_seed)
+        )
+        if self.fixed_csi_seed is not None and self.fixed_csi_seed < 0:
+            raise ValueError("fixed_csi_seed must be non-negative")
 
         self.buffer = RolloutBuffer(
             capacity=self.episodes_per_update * env.horizon,
@@ -30,6 +38,7 @@ class Rollout:
             critic_dim=env.critic_vector_dim,
             risk_shape=env.observation_space["risk_nodes"].shape,
             satellite_continuous_dim=satellite_actor.continuous_dim,
+            satellite_condition_dim=haps_ris_actor.satellite_condition_dim,
             haps_ris_continuous_dim=haps_ris_actor.continuous_dim,
             ris_mode_dim=haps_ris_actor.mode_dim,
         )
@@ -109,7 +118,28 @@ class Rollout:
             state = self._pending_state
             self._pending_state = None
             return state
+        if self.phase_only_training:
+            return self.env.reset(seed=self.fixed_csi_seed)
         return self.env.reset()
+
+    def _phase_only_satellite_action(self):
+        satellite_continuous, base_phase = (
+            self.env.get_phase_only_reference()
+        )
+        device = next(self.haps_ris_actor.parameters()).device
+        satellite_continuous = torch.as_tensor(
+            satellite_continuous,
+            dtype=torch.float32,
+            device=device,
+        ).unsqueeze(0)
+        satellite_pre_tanh = torch.zeros_like(satellite_continuous)
+        satellite_log_prob = torch.zeros(1, dtype=torch.float32, device=device)
+        return (
+            satellite_continuous,
+            satellite_pre_tanh,
+            satellite_log_prob,
+            base_phase,
+        )
 
     @torch.no_grad()
     def collect(self, gamma=0.99, gae_lambda=0.95, episode_callback=None):
@@ -136,12 +166,29 @@ class Rollout:
                     actor_risk_nodes, critic_risk_nodes
                 )
 
-                (
-                    satellite_continuous,
-                    satellite_pre_tanh,
-                    satellite_log_prob,
-                ) = self.satellite_actor.sample(
-                    actor_vector, actor_risk_nodes
+                base_phase = None
+                if self.phase_only_training:
+                    (
+                        satellite_continuous,
+                        satellite_pre_tanh,
+                        satellite_log_prob,
+                        base_phase,
+                    ) = self._phase_only_satellite_action()
+                else:
+                    (
+                        satellite_continuous,
+                        satellite_pre_tanh,
+                        satellite_log_prob,
+                    ) = self.satellite_actor.sample(
+                        actor_vector, actor_risk_nodes
+                    )
+                    base_phase = self.env.get_ris_phase_reference(
+                        satellite_continuous[0].detach().cpu().numpy()
+                    )
+                satellite_condition = (
+                    self.haps_ris_actor.satellite_beam_condition(
+                        satellite_continuous
+                    )
                 )
                 (
                     haps_ris_continuous,
@@ -149,7 +196,9 @@ class Rollout:
                     haps_ris_pre_tanh,
                     haps_ris_log_prob,
                 ) = self.haps_ris_actor.sample(
-                    actor_vector, actor_risk_nodes
+                    actor_vector,
+                    actor_risk_nodes,
+                    satellite_condition,
                 )
                 self._require_shape(
                     satellite_continuous,
@@ -165,6 +214,11 @@ class Rollout:
                     satellite_log_prob,
                     (1,),
                     "sampled satellite log_prob",
+                )
+                self._require_shape(
+                    satellite_condition,
+                    (1, self.haps_ris_actor.satellite_condition_dim),
+                    "sampled satellite condition",
                 )
                 self._require_shape(
                     haps_ris_continuous,
@@ -195,7 +249,9 @@ class Rollout:
                 )
                 action.update(
                     self.haps_ris_actor.to_env_action(
-                        haps_ris_continuous[0], ris_mode[0]
+                        haps_ris_continuous[0],
+                        ris_mode[0],
+                        base_phase=base_phase,
                     )
                 )
                 next_observation, reward, terminated, truncated, next_info = (
@@ -235,6 +291,7 @@ class Rollout:
                     risk_nodes=actor_risk_nodes,
                     critic_vector=critic_vector,
                     satellite_pre_tanh=satellite_pre_tanh[0],
+                    satellite_condition=satellite_condition[0],
                     haps_ris_pre_tanh=haps_ris_pre_tanh[0],
                     ris_mode=ris_mode[0],
                     satellite_log_prob=satellite_log_prob[0],

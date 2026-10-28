@@ -248,16 +248,16 @@ def get_system_params(argv=None):
     parser.add_argument("--num_ris", type=int, choices=[1], default=1)
 
     parser.add_argument("--num_sat_antennas", "--num_antennas", dest="num_sat_antennas", type=int, default=16)
-    parser.add_argument("--num_ris_elements", type=int, default=64)
-    parser.add_argument("--num_ris_groups", type=int, default=16)
+    parser.add_argument("--num_ris_elements", type=int, default=256)
+    parser.add_argument("--num_ris_groups", type=int, default=64)
     parser.add_argument("--ris_group_rows", type=int, default=2, help="Number of physical RIS rows in each control group")
     parser.add_argument("--ris_group_cols", type=int, default=2, help="Number of physical RIS columns in each control group")
     parser.add_argument("--ris_phase_residual_max_deg", type=float, default=45.0, help="Maximum absolute PPO phase residual for each RIS group")
 
-    parser.add_argument("--sat_max_power", "--transmit_power", dest="sat_max_power", type=float, default=2.5, help="Satellite total transmit-power limit in W")
+    parser.add_argument("--sat_max_power", "--transmit_power", dest="sat_max_power", type=float, default=25.0, help="Satellite total transmit-power limit in W")
     parser.add_argument("--jammer_power", type=float, default=0, help="Active Eve transmit power before antenna gain in W")
 
-    parser.add_argument("--ris_max_amplitude", type=float, default=12.0)
+    parser.add_argument("--ris_max_amplitude", type=float, default=8.0)
     parser.add_argument("--ris_max_power", type=float, default=1, help="Active-element output RF-power limit in W")
     parser.add_argument("--ris_noise_power", "--noise_power", dest="ris_noise_power", type=float, default=None, help="Optional active-RIS input-noise power override in W")
     parser.add_argument("--bob_noise_power", type=float, default=None, help="Optional Bob receiver-noise power override in W")
@@ -301,8 +301,8 @@ def get_system_params(argv=None):
     parser.add_argument("--use_3d_array_response", type=int, choices=[0, 1], default=1)
     parser.add_argument("--bandwidth_hz", type=float, default=1e6, help="Modeled receiver bandwidth in Hz")
     parser.add_argument("--noise_temperature_k", type=float, default=290.0, help="Reference noise temperature in K")
-    parser.add_argument("--bob_noise_figure_db", type=float, default=7.0, help="Bob receiver noise figure in dB")
-    parser.add_argument("--eve_noise_figure_db", type=float, default=7.0, help="Eve receiver noise figure in dB")
+    parser.add_argument("--bob_noise_figure_db", type=float, default=5.0, help="Bob receiver noise figure in dB")
+    parser.add_argument("--eve_noise_figure_db", type=float, default=5.0, help="Eve receiver noise figure in dB")
     parser.add_argument("--ris_noise_figure_db", type=float, default=6.0, help="Equivalent active-RIS input noise figure in dB")
 
     parser.add_argument('--a2g_a', type=float, default=9.61, help='Environment coefficient a for A2G LoS probability')
@@ -351,7 +351,7 @@ def get_system_params(argv=None):
     # Environment and reward
     # ==============================
     parser.add_argument("--max_episode_steps", type=int, default=200, help="Maximum number of steps per episode")
-    parser.add_argument("--secrecy_rate_threshold", type=float, nargs="+", default=[0.0001], help="Scalar or one threshold per user, bit/s/Hz")
+    parser.add_argument("--secrecy_rate_threshold", type=float, nargs="+", default=[0.1], help="Scalar or one threshold per user, bit/s/Hz")
     parser.add_argument("--channel_gain_db_min", type=float, default=-180.0, help="Fixed lower bound for channel-gain normalization")
     parser.add_argument("--channel_gain_db_max", type=float, default=-60.0, help="Fixed upper bound for channel-gain normalization")
     parser.add_argument("--sinr_db_min", type=float, default=-30.0, help="Fixed lower bound for SINR normalization")

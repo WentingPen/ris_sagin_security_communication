@@ -9,6 +9,7 @@ class RolloutBuffer:
         critic_dim,
         risk_shape,
         satellite_continuous_dim,
+        satellite_condition_dim,
         haps_ris_continuous_dim,
         ris_mode_dim,
     ):
@@ -16,6 +17,7 @@ class RolloutBuffer:
         actor_dim = int(actor_dim)
         critic_dim = int(critic_dim)
         satellite_continuous_dim = int(satellite_continuous_dim)
+        satellite_condition_dim = int(satellite_condition_dim)
         haps_ris_continuous_dim = int(haps_ris_continuous_dim)
         ris_mode_dim = int(ris_mode_dim)
         risk_shape = tuple(int(value) for value in risk_shape)
@@ -33,6 +35,9 @@ class RolloutBuffer:
         )
         self.satellite_pre_tanh = torch.empty(
             (capacity, satellite_continuous_dim), dtype=torch.float32
+        )
+        self.satellite_condition = torch.empty(
+            (capacity, satellite_condition_dim), dtype=torch.float32
         )
         self.haps_ris_pre_tanh = torch.empty(
             (capacity, haps_ris_continuous_dim), dtype=torch.float32
@@ -71,6 +76,7 @@ class RolloutBuffer:
         risk_nodes,
         critic_vector,
         satellite_pre_tanh,
+        satellite_condition,
         haps_ris_pre_tanh,
         ris_mode,
         satellite_log_prob,
@@ -98,6 +104,12 @@ class RolloutBuffer:
             self.satellite_pre_tanh[index],
             satellite_pre_tanh,
             "satellite_pre_tanh",
+            flatten=True,
+        )
+        self._copy_sample(
+            self.satellite_condition[index],
+            satellite_condition,
+            "satellite_condition",
             flatten=True,
         )
         self._copy_sample(
@@ -159,6 +171,9 @@ class RolloutBuffer:
                 "risk_nodes": self.risk_nodes[indices].to(device),
                 "critic_vector": self.critic_vector[indices].to(device),
                 "satellite_pre_tanh": self.satellite_pre_tanh[indices].to(
+                    device
+                ),
+                "satellite_condition": self.satellite_condition[indices].to(
                     device
                 ),
                 "haps_ris_pre_tanh": self.haps_ris_pre_tanh[indices].to(
