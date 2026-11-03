@@ -1,0 +1,75 @@
+{
+  "status": "PASS",
+  "device": "cpu",
+  "threads": 1,
+  "runs": [
+    {
+      "name": "fresh",
+      "directory": "D:\\desktop\\Code\\SecureCommunication\\RIS_SAGIN_SecureCommunication\\algorithm\\IPPO\\result\\2026-10-30_22-38-34",
+      "episode_rows": 16,
+      "update_rows": 2,
+      "update": 2,
+      "total_episodes": 16,
+      "total_env_steps": 32,
+      "first_episode": 1,
+      "last_episode": 16,
+      "plot_bytes": 304862
+    },
+    {
+      "name": "resume",
+      "directory": "D:\\desktop\\Code\\SecureCommunication\\RIS_SAGIN_SecureCommunication\\algorithm\\IPPO\\result\\2026-10-30_22-38-46_resume_u0002",
+      "episode_rows": 8,
+      "update_rows": 1,
+      "update": 3,
+      "total_episodes": 24,
+      "total_env_steps": 48,
+      "first_episode": 17,
+      "last_episode": 24,
+      "plot_bytes": 235673
+    },
+    {
+      "name": "phase_only",
+      "directory": "D:\\desktop\\Code\\SecureCommunication\\RIS_SAGIN_SecureCommunication\\algorithm\\IPPO\\result\\2026-10-30_22-38-54_phase_only",
+      "episode_rows": 8,
+      "update_rows": 1,
+      "update": 1,
+      "total_episodes": 8,
+      "total_env_steps": 16,
+      "first_episode": 1,
+      "last_episode": 8,
+      "plot_bytes": 230905
+    }
+  ],
+  "direct_script_entrypoint": "PASS",
+  "csv_schemas": "PASS",
+  "finite_metrics": "PASS",
+  "six_panel_plot_unit_check": "PASS",
+  "checkpoint_resume": "PASS",
+  "original_checkpoint_preserved": "PASS",
+  "source_scope": {
+    "original_files_checked": 15,
+    "changed_original_files": [],
+    "new_source_files_outside_IPPO": []
+  },
+  "unit_tests": {
+    "count": 11,
+    "status": "PASS",
+    "log": "unit_tests.log"
+  },
+  "plot_visual_review": "PASS",
+  "existing_mappo_training": {
+    "pid": 18776,
+    "start_time": "2026-10-30T22:01:02+08:00",
+    "observed_running": true,
+    "cpu_seconds_before": 3268.22,
+    "cpu_seconds_after": 3647.296875,
+    "episode_before": 444,
+    "episode_after": 501,
+    "process_control_actions": []
+  },
+  "limitations": [
+    "CPU smoke tests use a 4x4 risk grid and two-step episodes; they verify integration, not convergence.",
+    "The current default risk graph was separately checked by a CPU forward pass.",
+    "No full IPPO training run was left running."
+  ]
+}

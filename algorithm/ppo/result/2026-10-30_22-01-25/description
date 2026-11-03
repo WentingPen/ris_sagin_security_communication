@@ -1,0 +1,6 @@
+MAPPO算法       1-700episode
+卫星发射功率P_s=25W
+窃听者密度lambda_e_bg= 5e-8     lambda_e_max=1e-5
+RIS阵子数N=64
+RIS分组数=64
+保密门限R_0=0.1

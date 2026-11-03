@@ -1,0 +1,6 @@
+Traceback (most recent call last):
+  File "D:\desktop\Code\SecureCommunication\RIS_SAGIN_SecureCommunication\algorithm\ppo\main.py", line 632, in main
+    temporary_checkpoint.replace(checkpoint_path)
+  File "C:\Users\ASUS\.conda\envs\torch5070ti\Lib\pathlib.py", line 1188, in replace
+    os.replace(self, target)
+PermissionError: [WinError 5] 拒绝访问。: 'D:\\desktop\\Code\\SecureCommunication\\RIS_SAGIN_SecureCommunication\\algorithm\\ppo\\result\\2026-10-30_22-01-25\\checkpoint.tmp' -> 'D:\\desktop\\Code\\SecureCommunication\\RIS_SAGIN_SecureCommunication\\algorithm\\ppo\\result\\2026-10-30_22-01-25\\checkpoint.pt'

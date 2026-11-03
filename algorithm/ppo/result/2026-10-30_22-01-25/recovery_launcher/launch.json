@@ -1,0 +1,11 @@
+{
+  "name": "MAPPO resume u0085",
+  "cwd": "D:/desktop/Code/SecureCommunication/RIS_SAGIN_SecureCommunication",
+  "python": "C:/Users/ASUS/.conda/envs/torch5070ti/python.exe",
+  "args": [
+    "-B", "-u", "-m", "algorithm.ppo.main",
+    "--resume",
+    "D:/desktop/Code/SecureCommunication/RIS_SAGIN_SecureCommunication/algorithm/ppo/result/2026-10-30_22-01-25/checkpoint_recovered_u0085.pt",
+    "--total-updates", "1000"
+  ]
+}

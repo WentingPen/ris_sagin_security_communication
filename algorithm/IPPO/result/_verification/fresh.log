@@ -1,0 +1,23 @@
+Training results will be saved to: D:\desktop\Code\SecureCommunication\RIS_SAGIN_SecureCommunication\algorithm\IPPO\result\2026-10-30_22-38-34
+IPPO device=cpu; independent public-observation critics; RIS 64 groups (1x1) -> 64 elements; phase residuals +/-30.0 deg.
+Matplotlib backend=Agg; PNG refreshed every episode.
+episode=     1 return=-2.3938 mean_reward=-1.1969 SOP=1.0000 gap=0.001562 max_bob_C=0.005796 max_eve_C=0.004234
+episode=     2 return=-2.3956 mean_reward=-1.1978 SOP=1.0000 gap=0.001091 max_bob_C=0.004495 max_eve_C=0.003404
+episode=     3 return=-2.3854 mean_reward=-1.1927 SOP=1.0000 gap=0.003653 max_bob_C=0.010792 max_eve_C=0.007139
+episode=     4 return=-2.3932 mean_reward=-1.1966 SOP=1.0000 gap=0.001705 max_bob_C=0.006840 max_eve_C=0.005135
+episode=     5 return=-2.3870 mean_reward=-1.1935 SOP=1.0000 gap=0.003247 max_bob_C=0.011441 max_eve_C=0.008194
+episode=     6 return=-2.3925 mean_reward=-1.1963 SOP=1.0000 gap=0.001863 max_bob_C=0.006171 max_eve_C=0.004309
+episode=     7 return=-2.3980 mean_reward=-1.1990 SOP=1.0000 gap=0.000511 max_bob_C=0.001873 max_eve_C=0.001361
+episode=     8 return=-2.3860 mean_reward=-1.1930 SOP=1.0000 gap=0.003504 max_bob_C=0.011052 max_eve_C=0.007548
+Rollout batch complete; starting IPPO optimization...
+update=   1 episodes=     8 return=-2.3914 SOP=1.0000 sat_actor_loss=-0.015583 haps_actor_loss=-0.007648 critic_loss=1.645203 sat_critic_loss=1.615128 haps_critic_loss=1.675277 entropy_coef=0.001000 sat_KL=0.000274 haps_KL=0.000051 KL_stop=0/0
+episode=     9 return=-2.3991 mean_reward=-1.1995 SOP=1.0000 gap=0.000235 max_bob_C=0.001263 max_eve_C=0.001027
+episode=    10 return=-2.3821 mean_reward=-1.1910 SOP=1.0000 gap=0.004478 max_bob_C=0.013710 max_eve_C=0.009232
+episode=    11 return=-2.3967 mean_reward=-1.1983 SOP=1.0000 gap=0.000835 max_bob_C=0.002404 max_eve_C=0.001569
+episode=    12 return=-2.3955 mean_reward=-1.1978 SOP=1.0000 gap=0.001120 max_bob_C=0.004073 max_eve_C=0.002952
+episode=    13 return=-2.3952 mean_reward=-1.1976 SOP=1.0000 gap=0.001199 max_bob_C=0.004614 max_eve_C=0.003414
+episode=    14 return=-2.3939 mean_reward=-1.1969 SOP=1.0000 gap=0.001527 max_bob_C=0.006417 max_eve_C=0.004890
+episode=    15 return=-2.3847 mean_reward=-1.1923 SOP=1.0000 gap=0.003832 max_bob_C=0.012638 max_eve_C=0.008806
+episode=    16 return=-2.3914 mean_reward=-1.1957 SOP=1.0000 gap=0.002151 max_bob_C=0.009026 max_eve_C=0.006875
+Rollout batch complete; starting IPPO optimization...
+update=   2 episodes=    16 return=-2.3923 SOP=1.0000 sat_actor_loss=-0.006749 haps_actor_loss=-0.003304 critic_loss=1.629966 sat_critic_loss=1.641487 haps_critic_loss=1.618445 entropy_coef=0.000100 sat_KL=0.000068 haps_KL=0.000012 KL_stop=0/0

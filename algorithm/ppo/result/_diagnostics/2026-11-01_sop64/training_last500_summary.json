@@ -1,0 +1,23 @@
+{
+  "64": {
+    "mean_bob_capacity": 0.12928637657045447,
+    "mean_max_eve_capacity": 0.07274037055532412,
+    "mean_raw_security_gap": 0.0565460060151304,
+    "outage_rate": 1.0,
+    "mean_reward": -1.0869079879732908
+  },
+  "128": {
+    "mean_bob_capacity": 0.1994220981809923,
+    "mean_max_eve_capacity": 0.07274002557495285,
+    "mean_raw_security_gap": 0.12668207260603945,
+    "outage_rate": 0.0,
+    "mean_reward": 0.05336414520498103
+  },
+  "256": {
+    "mean_bob_capacity": 0.37457310409491223,
+    "mean_max_eve_capacity": 0.07290814059511885,
+    "mean_raw_security_gap": 0.30166496349979344,
+    "outage_rate": 0.0,
+    "mean_reward": 0.4033299269853143
+  }
+}

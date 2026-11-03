@@ -3,6 +3,7 @@ import csv
 from datetime import datetime
 from pathlib import Path
 import sys
+import time
 import traceback
 
 
@@ -18,6 +19,7 @@ import torch
 from matplotlib.backends import BackendFilter, backend_registry
 
 from algorithm.ppo.Controller import Controller, PPOConfig
+from algorithm.ppo.file_io import replace_file
 from system_model.params import get_system_params, validate_system_params
 from system_model.system_env import SAGIN_ENV
 
@@ -409,8 +411,13 @@ class LiveTrainingPlotter:
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary_path = path.with_name(f".{path.stem}.tmp{path.suffix}")
         self.figure.savefig(temporary_path, dpi=150)
-        temporary_path.replace(path)
-        return path
+        return replace_file(
+            temporary_path,
+            path,
+            fallback=path.with_name(
+                f"{path.stem}.recovery-{time.time_ns()}{path.suffix}"
+            ),
+        )
 
     def finish(self, path=None):
         if path is not None or self.output_path is not None:
@@ -629,7 +636,13 @@ def main(argv=None):
                 },
                 temporary_checkpoint,
             )
-            temporary_checkpoint.replace(checkpoint_path)
+            replace_file(
+                temporary_checkpoint,
+                checkpoint_path,
+                fallback=checkpoint_path.with_name(
+                    f"checkpoint_u{controller.update_index:04d}.pt"
+                ),
+            )
             update_writer.writerow({name: metrics[name] for name in update_fields})
             update_file.flush()
 

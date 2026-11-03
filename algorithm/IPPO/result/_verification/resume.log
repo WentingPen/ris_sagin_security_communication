@@ -1,0 +1,16 @@
+Training results will be saved to: D:\desktop\Code\SecureCommunication\RIS_SAGIN_SecureCommunication\algorithm\IPPO\result\2026-10-30_22-38-46_resume_u0002
+IPPO device=cpu; independent public-observation critics; RIS 64 groups (1x1) -> 64 elements; phase residuals +/-30.0 deg.
+Resuming D:\desktop\Code\SecureCommunication\RIS_SAGIN_SecureCommunication\algorithm\IPPO\result\2026-10-30_22-38-34\checkpoint.pt; committed update=2, episodes=16, env_steps=32. The new result directory records only episodes after this boundary.
+Matplotlib backend=Agg; PNG refreshed every episode.
+episode=    17 return=-2.3903 mean_reward=-1.1951 SOP=1.0000 gap=0.002437 max_bob_C=0.009070 max_eve_C=0.006633
+episode=    18 return=-2.3935 mean_reward=-1.1968 SOP=1.0000 gap=0.001617 max_bob_C=0.006987 max_eve_C=0.005370
+episode=    19 return=-2.3970 mean_reward=-1.1985 SOP=1.0000 gap=0.000753 max_bob_C=0.002962 max_eve_C=0.002209
+episode=    20 return=-2.3987 mean_reward=-1.1994 SOP=1.0000 gap=0.000324 max_bob_C=0.000999 max_eve_C=0.000674
+episode=    21 return=-2.3991 mean_reward=-1.1995 SOP=1.0000 gap=0.000226 max_bob_C=0.000892 max_eve_C=0.000666
+episode=    22 return=-2.3928 mean_reward=-1.1964 SOP=1.0000 gap=0.001799 max_bob_C=0.006345 max_eve_C=0.004546
+episode=    23 return=-2.3923 mean_reward=-1.1961 SOP=1.0000 gap=0.001929 max_bob_C=0.007154 max_eve_C=0.005224
+episode=    24 return=-2.3887 mean_reward=-1.1944 SOP=1.0000 gap=0.002819 max_bob_C=0.009232 max_eve_C=0.006413
+Rollout batch complete; starting IPPO optimization...
+update=   3 episodes=    24 return=-2.3940 SOP=1.0000 sat_actor_loss=-0.006883 haps_actor_loss=-0.002196 critic_loss=1.612884 sat_critic_loss=1.608855 haps_critic_loss=1.616912 entropy_coef=0.000100 sat_KL=0.000068 haps_KL=0.000006 KL_stop=0/0
+C:\Users\ASUS\.conda\envs\torch5070ti\Lib\site-packages\torch\_utils.py:358: UserWarning: Sparse invariant checks are implicitly disabled. Memory errors (e.g. SEGFAULT) will occur when operating on a sparse tensor which violates the invariants, but checks incur performance overhead. To silence this warning, explicitly opt in or out. See `torch.sparse.check_sparse_tensor_invariants.__doc__` for guidance.  (Triggered internally at C:\actions-runner\_work\pytorch\pytorch\aten\src\ATen\Context.cpp:767.)
+  result = torch.sparse_coo_tensor(

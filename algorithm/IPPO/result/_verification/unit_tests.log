@@ -1,0 +1,16 @@
+test_64_and_256_element_group_actions_and_power_constraints (test_ippo.IPPOTests.test_64_and_256_element_group_actions_and_power_constraints) ... ok
+test_checkpoint_restores_all_four_networks_and_optimizers (test_ippo.IPPOTests.test_checkpoint_restores_all_four_networks_and_optimizers) ... ok
+test_critics_are_independent_and_training_needs_no_private_info (test_ippo.IPPOTests.test_critics_are_independent_and_training_needs_no_private_info) ... ok
+test_csv_columns_and_six_panel_plot_match_mappo (test_ippo.IPPOTests.test_csv_columns_and_six_panel_plot_match_mappo) ... ok
+test_current_default_risk_graph_forward_on_cpu (test_ippo.IPPOTests.test_current_default_risk_graph_forward_on_cpu) ... ok
+test_default_hyperparameters_match_mappo (test_ippo.IPPOTests.test_default_hyperparameters_match_mappo) ... ok
+test_each_actor_receives_its_own_advantage (test_ippo.IPPOTests.test_each_actor_receives_its_own_advantage) ... ok
+test_mappo_and_wrong_observation_checkpoints_are_rejected (test_ippo.IPPOTests.test_mappo_and_wrong_observation_checkpoints_are_rejected) ... ok
+test_phase_only_freezes_satellite_and_modes (test_ippo.IPPOTests.test_phase_only_freezes_satellite_and_modes) ... ok
+test_rollout_replays_group_log_prob_and_satellite_condition (test_ippo.IPPOTests.test_rollout_replays_group_log_prob_and_satellite_condition) ... ok
+test_two_agent_gae_terminal_and_truncation (test_ippo.IPPOTests.test_two_agent_gae_terminal_and_truncation) ... ok
+
+----------------------------------------------------------------------
+Ran 11 tests in 3.906s
+
+OK

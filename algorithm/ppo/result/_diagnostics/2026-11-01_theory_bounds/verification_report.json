@@ -1,0 +1,81 @@
+{
+  "assumptions": "single Bob, zero jammer; executed gains; group residuals bounded by 30 degrees",
+  "sample_design": "10 geometries x 10 fading slots; reference and random actions share CSI; not independent slots across one geometry",
+  "no_training": true,
+  "risk_grid": "4x4, unused for analytic actions",
+  "total_checks": 1000,
+  "largest_lower_violation": -3.209539035797595e-07,
+  "largest_upper_violation": 3.0531133177191805e-16,
+  "source_files_unchanged": true,
+  "source_sha256": {
+    "system_model\\channel_model.py": "9f455f8729e57978ee669e01203bd202fab2ecc9367cf9c25353c5e2436b984e",
+    "system_model\\hcpp_eve.py": "57beb778b37cbc2a5320fa2b7fcdf68cbafbb29baa55e5ac063ad78b65fe2d93",
+    "system_model\\legitusers.py": "bc66efcf5926fd7b053ae4180aac65925c40f1b0227a01fedec8fb158e8e5adb",
+    "system_model\\params.py": "69f3af117a7fc4250ab5f94edb38a8fed843ecb6c04675a2ba03ac34cfc70399",
+    "system_model\\satellite.py": "4bad90061ad8444e4024a1e3bd01034162e60c91f7ffac8adb479afa3cd0b2e8",
+    "system_model\\system_env.py": "660111b6b44d2df0a52366de4130ed4f14d01e9ec1e8fc713f6d6b0d10524832",
+    "system_model\\uav_ris.py": "827f320335ae8142ca392ee7ba187a20ac55d341b3f6da82d189a236976e146f",
+    "algorithm\\ppo\\actor.py": "286f075f9f162edf8a8279e212a11fe78bc1acf0e8c9f323ed8b33dd4ecefdf0",
+    "algorithm\\ppo\\buffer.py": "6466b4520111031f6e703dd927d3dd3cbcfe15a92a384fdff114003daacf2346",
+    "algorithm\\ppo\\Controller.py": "30688809eada2209925404da199fd2ee6823340420a3374458604d232534eddd",
+    "algorithm\\ppo\\critic.py": "f8233e3e2b278c64afd9107e19381d48365b8ba46faab70372072dad2aff5488",
+    "algorithm\\ppo\\file_io.py": "7ba10d4625d12a52d0fa19329a2f0cdb0863f8679a26083271e0690b78084af6",
+    "algorithm\\ppo\\main.py": "8ae5997997fcf4d452abcf7c9d8fbb16fb0c85a0e13d268b11f1b99adf966477",
+    "algorithm\\ppo\\risk_gnn.py": "fef7fc68d40e659ce094687d012dff6ec7b9c2cbf0670de3b013a6d755439f1d",
+    "algorithm\\ppo\\Rollout.py": "bdcce035d6b559beb3b3dbdc52be3ca22e0c37f8aa5398a70fb08e4a764e22ec",
+    "algorithm\\IPPO\\__init__.py": "6198061114fbaf18c1abefabeda67490f010e96ec3f30044f40bd9f79fd5b9f3",
+    "algorithm\\IPPO\\actor.py": "45a0e977cb2160f3820dff5a8c962dae361fec940167e2bd65ec84ba8c1fd22e",
+    "algorithm\\IPPO\\buffer.py": "73816f590e479989dbb76a84e6193fddce46e6afb2631318a65933998087dba0",
+    "algorithm\\IPPO\\Controller.py": "ca02df9dce168b70dde5428cf1df20af28f29637e1e3252a27986a60d8a90fe5",
+    "algorithm\\IPPO\\critic.py": "b70bc900db655ec7a67cf3bbcd1a1cde96767b5048fd1c06093e3b2ac2e6507c",
+    "algorithm\\IPPO\\main.py": "d8a50ba7acac7086c527134cf6e55d6f46b9d5dde05d8f651cd3a5d984cc9a34",
+    "algorithm\\IPPO\\Rollout.py": "72fbc4a5f20dbd9fccb11385b5d39eab7a92db4b1a36196c892843410a3978e2"
+  },
+  "reference_summary": {
+    "64": {
+      "lower": 0.04972547018853794,
+      "actual": 0.05943850506176524,
+      "upper": 0.05964045445956447,
+      "samples": 100,
+      "empirical_SOP": 1.0,
+      "empirical_SOP_upper": 1.0,
+      "empirical_SOP_lower": 1.0
+    },
+    "96": {
+      "lower": 0.07938204151828736,
+      "actual": 0.0951367452292716,
+      "upper": 0.09537641634409716,
+      "samples": 100,
+      "empirical_SOP": 0.88,
+      "empirical_SOP_upper": 1.0,
+      "empirical_SOP_lower": 0.86
+    },
+    "112": {
+      "lower": 0.0942284648414331,
+      "actual": 0.11311686192883524,
+      "upper": 0.11349125839401446,
+      "samples": 100,
+      "empirical_SOP": 0.0,
+      "empirical_SOP_upper": 0.92,
+      "empirical_SOP_lower": 0.0
+    },
+    "128": {
+      "lower": 0.11027988390759581,
+      "actual": 0.1324625811782304,
+      "upper": 0.13276559550632294,
+      "samples": 100,
+      "empirical_SOP": 0.0,
+      "empirical_SOP_upper": 0.02,
+      "empirical_SOP_lower": 0.0
+    },
+    "256": {
+      "lower": 0.2604384676143816,
+      "actual": 0.3147254713652445,
+      "upper": 0.31524490880191286,
+      "samples": 100,
+      "empirical_SOP": 0.0,
+      "empirical_SOP_upper": 0.0,
+      "empirical_SOP_lower": 0.0
+    }
+  }
+}

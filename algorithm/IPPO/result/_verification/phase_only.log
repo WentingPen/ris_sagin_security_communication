@@ -1,0 +1,14 @@
+Training results will be saved to: D:\desktop\Code\SecureCommunication\RIS_SAGIN_SecureCommunication\algorithm\IPPO\result\2026-10-30_22-38-54_phase_only
+IPPO device=cpu; independent public-observation critics; RIS 64 groups (1x1) -> 64 elements; phase residuals +/-30.0 deg.
+Phase-only: analytic MRT, all-passive RIS, replayed seed=2026.
+Matplotlib backend=Agg; PNG refreshed every episode.
+episode=     1 return=-2.3731 mean_reward=-1.1865 SOP=1.0000 gap=0.006728 max_bob_C=0.079646 max_eve_C=0.072918
+episode=     2 return=-2.3731 mean_reward=-1.1865 SOP=1.0000 gap=0.006733 max_bob_C=0.079650 max_eve_C=0.072918
+episode=     3 return=-2.3731 mean_reward=-1.1865 SOP=1.0000 gap=0.006732 max_bob_C=0.079649 max_eve_C=0.072918
+episode=     4 return=-2.3731 mean_reward=-1.1865 SOP=1.0000 gap=0.006732 max_bob_C=0.079650 max_eve_C=0.072918
+episode=     5 return=-2.3731 mean_reward=-1.1865 SOP=1.0000 gap=0.006733 max_bob_C=0.079650 max_eve_C=0.072917
+episode=     6 return=-2.3731 mean_reward=-1.1865 SOP=1.0000 gap=0.006734 max_bob_C=0.079652 max_eve_C=0.072918
+episode=     7 return=-2.3731 mean_reward=-1.1865 SOP=1.0000 gap=0.006730 max_bob_C=0.079648 max_eve_C=0.072918
+episode=     8 return=-2.3731 mean_reward=-1.1865 SOP=1.0000 gap=0.006731 max_bob_C=0.079649 max_eve_C=0.072918
+Rollout batch complete; starting IPPO optimization...
+update=   1 episodes=     8 return=-2.3731 SOP=1.0000 sat_actor_loss=0.000000 haps_actor_loss=-0.021586 critic_loss=0.684622 sat_critic_loss=0.705518 haps_critic_loss=0.663727 entropy_coef=0.000000 sat_KL=0.000000 haps_KL=0.000564 KL_stop=0/0

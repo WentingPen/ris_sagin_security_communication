@@ -1,0 +1,32 @@
+{
+  "original_error": "PermissionError WinError 5 during checkpoint.tmp -> checkpoint.pt",
+  "committed_checkpoint": {
+    "update": 84,
+    "episodes": 672,
+    "sha256": "a9e697df0a1c3d2ed13c624c4d3ab5888ab6716b47f1ac98ca17e0205ff2b109"
+  },
+  "recovered_checkpoint": {
+    "path": "D:\\desktop\\Code\\SecureCommunication\\RIS_SAGIN_SecureCommunication\\algorithm\\ppo\\result\\2026-10-30_22-01-25\\checkpoint_recovered_u0085.pt",
+    "update": 85,
+    "episodes": 680,
+    "env_steps": 136000,
+    "sha256": "cef10c4f854828b0d2a35bcef05024c83e206c1b6e77ca96c575bc26ff2c0c2a"
+  },
+  "validation": "All model weights finite; full models and Adam states restored; current full-size graph forward and one environment step passed on CPU",
+  "original_files_preserved": true,
+  "unit_tests": {
+    "file_io": 5,
+    "ippo_regression": 11
+  },
+  "resume_total_updates": 1000,
+  "resumed_training": {
+    "result_directory": "D:\\desktop\\Code\\SecureCommunication\\RIS_SAGIN_SecureCommunication\\algorithm\\ppo\\result\\2026-10-31_11-28-27_resume_u0085",
+    "vscode_terminal": "MAPPO resume u0085",
+    "pid": 34208,
+    "first_episode": 681,
+    "observed_latest_episode": 716,
+    "observed_committed_update": 89,
+    "training_error_log_present": false,
+    "gpu": "NVIDIA GeForce RTX 5070 Ti"
+  }
+}

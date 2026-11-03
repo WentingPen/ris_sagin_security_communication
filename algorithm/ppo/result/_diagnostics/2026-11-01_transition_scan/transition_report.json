@@ -1,0 +1,111 @@
+{
+  "method": "MRT satellite, all-active RIS, exact per-element Bob-coherent phases, zero group residual; no training",
+  "physical_settings": {
+    "sat_power_W": 25,
+    "amplitude_max": 8,
+    "R0": 0.1,
+    "jammer_power_W": 0,
+    "ris_array_rows": 16
+  },
+  "sampling": "Same 50 geometry seeds for each N, 100 fading slots per geometry; no claim of unconditional iid slots within one geometry",
+  "groups": "G=16 for all candidates; grouping does not affect this all-active zero-residual reference",
+  "risk_grid": "4x4 only to accelerate an analytic reference that does not consume the risk graph; no physical channel settings changed",
+  "results": {
+    "80": {
+      "n": 5000,
+      "layouts": 50,
+      "slots_per_layout": 100,
+      "G": 16,
+      "group_rows": 1,
+      "group_cols": 5,
+      "mean_gap": 0.07655296535476278,
+      "min_gap": 0.06355436085701567,
+      "max_gap": 0.09124136620531563,
+      "q01_gap": 0.0684760170949921,
+      "q05_gap": 0.07070790288078199,
+      "SOP_at_R0_0.1": 1.0,
+      "outage_count": 5000,
+      "threshold_sweep": {
+        "0.1": 1.0,
+        "0.105": 1.0,
+        "0.11": 1.0,
+        "0.115": 1.0,
+        "0.12": 1.0,
+        "0.125": 1.0,
+        "0.13": 1.0
+      }
+    },
+    "96": {
+      "n": 5000,
+      "layouts": 50,
+      "slots_per_layout": 100,
+      "G": 16,
+      "group_rows": 1,
+      "group_cols": 6,
+      "mean_gap": 0.09446331658768976,
+      "min_gap": 0.07957259647894466,
+      "max_gap": 0.11010888529670593,
+      "q01_gap": 0.08542217069515616,
+      "q05_gap": 0.08775859970313851,
+      "SOP_at_R0_0.1": 0.9036,
+      "outage_count": 4518,
+      "threshold_sweep": {
+        "0.1": 0.9036,
+        "0.105": 0.993,
+        "0.11": 0.9998,
+        "0.115": 1.0,
+        "0.12": 1.0,
+        "0.125": 1.0,
+        "0.13": 1.0
+      }
+    },
+    "112": {
+      "n": 5000,
+      "layouts": 50,
+      "slots_per_layout": 100,
+      "G": 16,
+      "group_rows": 1,
+      "group_cols": 7,
+      "mean_gap": 0.11351851808026836,
+      "min_gap": 0.09788688991051239,
+      "max_gap": 0.13017401815368887,
+      "q01_gap": 0.10281225555950378,
+      "q05_gap": 0.10578008718999639,
+      "SOP_at_R0_0.1": 0.0012,
+      "outage_count": 6,
+      "threshold_sweep": {
+        "0.1": 0.0012,
+        "0.105": 0.0318,
+        "0.11": 0.227,
+        "0.115": 0.6304,
+        "0.12": 0.9152,
+        "0.125": 0.9914,
+        "0.13": 0.9996
+      }
+    },
+    "128": {
+      "n": 5000,
+      "layouts": 50,
+      "slots_per_layout": 100,
+      "G": 16,
+      "group_rows": 1,
+      "group_cols": 8,
+      "mean_gap": 0.13319114518877131,
+      "min_gap": 0.11610250134069239,
+      "max_gap": 0.1519986536933166,
+      "q01_gap": 0.12123757460304921,
+      "q05_gap": 0.12475722738020219,
+      "SOP_at_R0_0.1": 0.0,
+      "outage_count": 0,
+      "threshold_sweep": {
+        "0.1": 0.0,
+        "0.105": 0.0,
+        "0.11": 0.0,
+        "0.115": 0.0,
+        "0.12": 0.0046,
+        "0.125": 0.0562,
+        "0.13": 0.2732
+      }
+    }
+  }
+}

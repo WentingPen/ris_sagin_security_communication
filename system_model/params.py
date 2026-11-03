@@ -255,7 +255,7 @@ def get_system_params(argv=None):
     parser.add_argument("--ris_phase_residual_max_deg", type=float, default=45.0, help="Maximum absolute PPO phase residual for each RIS group")
 
     parser.add_argument("--sat_max_power", "--transmit_power", dest="sat_max_power", type=float, default=25.0, help="Satellite total transmit-power limit in W")
-    parser.add_argument("--jammer_power", type=float, default=0, help="Active Eve transmit power before antenna gain in W")
+    parser.add_argument("--jammer_power", type=float, default=0.1, help="Active Eve transmit power before antenna gain in W")
 
     parser.add_argument("--ris_max_amplitude", type=float, default=8.0)
     parser.add_argument("--ris_max_power", type=float, default=1, help="Active-element output RF-power limit in W")
