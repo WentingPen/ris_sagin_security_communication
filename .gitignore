@@ -1,0 +1,5 @@
+# Local checkpoints exceeding GitHub's 100 MiB file limit.
+/algorithm/ppo/result/2026-11-06_20-15-47/checkpoint.pt
+/algorithm/ppo/result/2026-11-10_18-28-41/checkpoint.pt
+/algorithm/ppo/result/2026-11-12_09-52-09/checkpoint.pt
+/algorithm/ppo/result/2026-11-12_14-18-13_resume_u0017/checkpoint.pt

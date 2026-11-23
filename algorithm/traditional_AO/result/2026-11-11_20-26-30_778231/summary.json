@@ -1,0 +1,11 @@
+{
+  "algorithm": "AO",
+  "information": "oracle_full_csi",
+  "completed_episodes": 3,
+  "total_env_steps": 6,
+  "completed_batches": 2,
+  "outage_rate": 0.3333333333333333,
+  "mean_bob_capacity": 0.28600964818168895,
+  "mean_max_eve_capacity": 0.06393199720042773,
+  "mean_raw_security_gap": 0.2220776509812612
+}

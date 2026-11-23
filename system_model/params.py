@@ -248,8 +248,8 @@ def get_system_params(argv=None):
     parser.add_argument("--num_ris", type=int, choices=[1], default=1)
 
     parser.add_argument("--num_sat_antennas", "--num_antennas", dest="num_sat_antennas", type=int, default=16)
-    parser.add_argument("--num_ris_elements", type=int, default=256)
-    parser.add_argument("--num_ris_groups", type=int, default=64)
+    parser.add_argument("--num_ris_elements", type=int, default=512)
+    parser.add_argument("--num_ris_groups", type=int, default=128)
     parser.add_argument("--ris_group_rows", type=int, default=2, help="Number of physical RIS rows in each control group")
     parser.add_argument("--ris_group_cols", type=int, default=2, help="Number of physical RIS columns in each control group")
     parser.add_argument("--ris_phase_residual_max_deg", type=float, default=45.0, help="Maximum absolute PPO phase residual for each RIS group")
@@ -333,7 +333,7 @@ def get_system_params(argv=None):
     parser.add_argument('--ris_normal', type=float, nargs=3, default=[1.0, 0.0, 0.0], help='RIS surface normal vector')
     parser.add_argument('--enforce_ris_half_space', type=int, choices=[0, 1], default=1, help='Whether to enforce RIS front-side visibility')
     parser.add_argument('--ris_angle_gain_exponent', type=float, default=1.0, help='Exponent q of the RIS power-domain angular gain')
-    parser.add_argument('--g2g_reference_gain_db', type=float, default=-38.5, help='G2G reference channel power gain at 1 m in dB')
+    parser.add_argument('--g2g_reference_gain_db', type=float, default=-58.5, help='G2G reference channel power gain at 1 m in dB')
     parser.add_argument('--g2g_path_loss_exponent', type=float, default=3.0, help='G2G path-loss exponent')
 
     # ==============================

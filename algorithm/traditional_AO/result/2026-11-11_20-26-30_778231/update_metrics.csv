@@ -1,0 +1,3 @@
+update,total_episodes,total_env_steps,mean_episode_return,mean_outage_rate,satellite_actor_loss,haps_ris_actor_loss,actor_loss,critic_loss,satellite_entropy,haps_ris_entropy,entropy,satellite_approx_kl,haps_ris_approx_kl,approx_kl,satellite_clip_fraction,haps_ris_clip_fraction,clip_fraction,entropy_coef,satellite_early_stop,haps_ris_early_stop,satellite_stop_kl,haps_ris_stop_kl,mean_initial_objective,mean_final_objective,mean_iterations,mean_evaluations,mean_solve_seconds
+1,2,4,-0.7046415357395901,0.5,,,,,,,,,,,,,,,,,,,0.07103412949094476,0.07383961607582497,2.0,526.5,2.618531874999462
+2,3,6,0.8742148831297087,0.0,,,,,,,,,,,,,,,,,,,0.218528968737298,0.21855372079213367,2.0,525.0,2.2126116500148783

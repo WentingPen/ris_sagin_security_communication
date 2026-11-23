@@ -1,0 +1,24 @@
+Traceback (most recent call last):
+  File "D:\pwt\RIS_SAGIN_SecureCommunication\algorithm\ppo\main.py", line 610, in main
+    metrics = controller.update(
+              ^^^^^^^^^^^^^^^^^^
+  File "D:\pwt\RIS_SAGIN_SecureCommunication\algorithm\ppo\Controller.py", line 418, in update
+    self.rollout.collect(
+  File "D:\app\miniconda\aconda\envs\pwt_torch_env\Lib\site-packages\torch\utils\_contextlib.py", line 120, in decorate_context
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "D:\pwt\RIS_SAGIN_SecureCommunication\algorithm\ppo\Rollout.py", line 198, in collect
+    ) = self.haps_ris_actor.sample(
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\pwt\RIS_SAGIN_SecureCommunication\algorithm\ppo\actor.py", line 322, in sample
+    mode_distribution, phase_distribution = self._distributions(
+                                            ^^^^^^^^^^^^^^^^^^^^
+  File "D:\pwt\RIS_SAGIN_SecureCommunication\algorithm\ppo\actor.py", line 309, in _distributions
+    mode = Bernoulli(logits=self.mode_head(conditioned_hidden))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\app\miniconda\aconda\envs\pwt_torch_env\Lib\site-packages\torch\distributions\bernoulli.py", line 69, in __init__
+    super().__init__(batch_shape, validate_args=validate_args)
+  File "D:\app\miniconda\aconda\envs\pwt_torch_env\Lib\site-packages\torch\distributions\distribution.py", line 76, in __init__
+    if not torch._is_all_true(valid):
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+KeyboardInterrupt

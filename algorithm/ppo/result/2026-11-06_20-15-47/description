@@ -1,0 +1,9 @@
+MAPPO算法  
+卫星发射功率P_s=25W
+窃听者密度lambda_e_bg= 5e-8     lambda_e_max=1e-5
+RIS阵子数N=512
+RIS分组数=64 4×2
+保密门限R_0=0.1
+jammer power:0.1
+g2g_reference_gain_db:38.5 ->58.5
+episodes-per-update 8

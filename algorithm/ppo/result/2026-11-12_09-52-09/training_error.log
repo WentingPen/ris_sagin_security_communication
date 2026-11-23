@@ -1,0 +1,30 @@
+Traceback (most recent call last):
+  File "D:\desktop\Code\SecureCommunication\RIS_SAGIN_SecureCommunication\algorithm\ppo\main.py", line 768, in main
+    metrics = controller.update(
+              ^^^^^^^^^^^^^^^^^^
+  File "D:\desktop\Code\SecureCommunication\RIS_SAGIN_SecureCommunication\algorithm\ppo\Controller.py", line 418, in update
+    self.rollout.collect(
+  File "C:\Users\ASUS\.conda\envs\torch5070ti\Lib\site-packages\torch\utils\_contextlib.py", line 124, in decorate_context
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "D:\desktop\Code\SecureCommunication\RIS_SAGIN_SecureCommunication\algorithm\ppo\Rollout.py", line 258, in collect
+    self.env.step(action)
+  File "D:\desktop\Code\SecureCommunication\RIS_SAGIN_SecureCommunication\system_model\system_env.py", line 239, in step
+    self._apply_action(action)
+  File "D:\desktop\Code\SecureCommunication\RIS_SAGIN_SecureCommunication\system_model\system_env.py", line 349, in _apply_action
+    self._update_active_eve_transmission(previous_margin)
+  File "D:\desktop\Code\SecureCommunication\RIS_SAGIN_SecureCommunication\system_model\system_env.py", line 419, in _update_active_eve_transmission
+    self.active_eve.select_jammer_direction(
+  File "D:\desktop\Code\SecureCommunication\RIS_SAGIN_SecureCommunication\system_model\hcpp_eve.py", line 301, in select_jammer_direction
+    leakage = residual * np.mean([
+                                 ^
+  File "D:\desktop\Code\SecureCommunication\RIS_SAGIN_SecureCommunication\system_model\hcpp_eve.py", line 302, in <listcomp>
+    self.get_tx_gain(position) * direct_link + ris_gain * ris_link
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\desktop\Code\SecureCommunication\RIS_SAGIN_SecureCommunication\system_model\hcpp_eve.py", line 220, in get_tx_gain
+    distance = np.linalg.norm(direction)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\ASUS\.conda\envs\torch5070ti\Lib\site-packages\numpy\linalg\_linalg.py", line 2767, in norm
+    sqnorm = x.dot(x)
+             ^^^^^^^^
+KeyboardInterrupt

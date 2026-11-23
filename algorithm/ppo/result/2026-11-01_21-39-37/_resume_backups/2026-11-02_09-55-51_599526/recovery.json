@@ -1,0 +1,9 @@
+{
+  "checkpoint": "D:\\pwt\\RIS_SAGIN_SecureCommunication\\algorithm\\ppo\\result\\2026-11-01_21-39-37\\checkpoint.pt",
+  "update": 598,
+  "total_episodes": 4784,
+  "total_env_steps": 956800,
+  "retained_episode_rows": 4784,
+  "retained_update_rows": 598,
+  "discarded_uncommitted_episode_rows": 4
+}

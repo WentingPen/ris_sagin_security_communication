@@ -38,12 +38,25 @@ def _parse_training_args(argv=None):
         help="Checkpoint path to resume from; checkpoint parameters are reused",
     )
     parser.add_argument(
+        "--resume-in-place",
+        action="store_true",
+        help="Append resumed metrics and checkpoints to the checkpoint directory",
+    )
+    parser.add_argument(
         "--total-updates",
         "--total_updates",
         dest="total_updates",
         type=int,
         default=1000,
         help="Target total PPO update count, including completed updates",
+    )
+    parser.add_argument(
+        "--episodes-per-update",
+        "--episodes_per_update",
+        dest="episodes_per_update",
+        type=int,
+        default=None,
+        help="Complete episodes collected per PPO update (default: 8 for new training)",
     )
     parser.add_argument(
         "--phase-only-training",
@@ -68,6 +81,21 @@ def _parse_training_args(argv=None):
     training_args, system_argv = parser.parse_known_args(argv)
     if training_args.total_updates <= 0:
         parser.error("--total-updates must be positive")
+    if (
+        training_args.episodes_per_update is not None
+        and training_args.episodes_per_update <= 0
+    ):
+        parser.error("--episodes-per-update must be positive")
+    if (
+        training_args.resume is not None
+        and training_args.episodes_per_update is not None
+    ):
+        parser.error(
+            "--episodes-per-update cannot override a resumed checkpoint; "
+            "the checkpoint PPO configuration is reused"
+        )
+    if training_args.resume_in_place and training_args.resume is None:
+        parser.error("--resume-in-place requires --resume")
     if training_args.resume is not None and system_argv:
         parser.error(
             "system parameter overrides are not allowed with --resume; "
@@ -194,6 +222,74 @@ def _restore_controller(controller, checkpoint):
     controller.update_index = int(checkpoint["update"])
     controller.total_episodes = int(checkpoint["total_episodes"])
     controller.total_env_steps = int(checkpoint["total_env_steps"])
+
+
+def _load_committed_metric_rows(
+    path,
+    fieldnames,
+    index_field,
+    committed_index,
+):
+    path = Path(path)
+    if not path.is_file():
+        raise FileNotFoundError(f"resume metric file does not exist: {path}")
+
+    with path.open("r", newline="", encoding="utf-8") as metric_file:
+        reader = csv.DictReader(metric_file)
+        if reader.fieldnames != fieldnames:
+            raise ValueError(f"resume metric header does not match: {path}")
+        rows = list(reader)
+
+    committed_rows = []
+    previous_index = None
+    for row_number, row in enumerate(rows, start=2):
+        try:
+            current_index = int(row[index_field])
+        except (KeyError, TypeError, ValueError) as error:
+            raise ValueError(
+                f"invalid {index_field} at {path}:{row_number}"
+            ) from error
+        if current_index <= 0 or (
+            previous_index is not None and current_index <= previous_index
+        ):
+            raise ValueError(
+                f"non-increasing {index_field} at {path}:{row_number}"
+            )
+        previous_index = current_index
+        if current_index <= committed_index:
+            committed_rows.append(row)
+
+    if committed_index > 0 and (
+        not committed_rows
+        or int(committed_rows[-1][index_field]) != committed_index
+    ):
+        raise ValueError(
+            f"{path} does not contain committed {index_field}={committed_index}"
+        )
+
+    return committed_rows, len(rows) - len(committed_rows)
+
+
+def _discard_uncommitted_metric_rows(
+    path,
+    fieldnames,
+    committed_rows,
+    discarded_count,
+):
+    if not discarded_count:
+        return
+
+    path = Path(path)
+    temporary_path = path.with_name(f".{path.stem}.resume.tmp{path.suffix}")
+    with temporary_path.open("w", newline="", encoding="utf-8") as metric_file:
+        writer = csv.DictWriter(metric_file, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(committed_rows)
+    replace_file(temporary_path, path)
+    print(
+        f"Discarded {discarded_count} uncommitted row(s) from: {path}",
+        flush=True,
+    )
 
 
 class LiveTrainingPlotter:
@@ -326,6 +422,23 @@ class LiveTrainingPlotter:
         if self.output_path is not None:
             self.save()
 
+    def load_history(self, episode_rows, update_rows):
+        for row in episode_rows:
+            self.on_episode({
+                "episode": int(row["episode"]),
+                "outage_rate": float(row["outage_rate"]),
+                "return": float(row["return"]),
+                "max_bob_capacity": float(row["max_bob_capacity"]),
+                "max_eve_capacity": float(row["max_eve_capacity"]),
+            })
+        for row in update_rows:
+            self.on_update({
+                "total_episodes": int(row["total_episodes"]),
+                "satellite_actor_loss": float(row["satellite_actor_loss"]),
+                "haps_ris_actor_loss": float(row["haps_ris_actor_loss"]),
+                "critic_loss": float(row["critic_loss"]),
+            })
+
     def on_episode(self, event):
         self.episodes.append(event["episode"])
         self.sops.append(event["outage_rate"])
@@ -441,7 +554,10 @@ def main(argv=None):
             else int(training_args.phase_only_csi_seed)
         )
         ppo_config = PPOConfig(
-            episodes_per_update=8,
+            episodes_per_update=(
+                8 if training_args.episodes_per_update is None
+                else training_args.episodes_per_update
+            ),
             batch_size=256,
             ppo_epochs=2,
             gamma=0.0 if phase_only_training else 0.99,
@@ -504,17 +620,20 @@ def main(argv=None):
     if resume_checkpoint is not None:
         _restore_controller(controller, resume_checkpoint)
 
-    run_name = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    if ppo_config.phase_only_training:
-        run_name += "_phase_only"
-    if resume_checkpoint is not None:
-        run_name += f"_resume_u{controller.update_index:04d}"
-    run_dir = (
-        Path(__file__).resolve().parent
-        / "result"
-        / run_name
-    )
-    run_dir.mkdir(parents=True, exist_ok=False)
+    if training_args.resume_in_place:
+        run_dir = resume_path.parent
+    else:
+        run_name = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        if ppo_config.phase_only_training:
+            run_name += "_phase_only"
+        if resume_checkpoint is not None:
+            run_name += f"_resume_u{controller.update_index:04d}"
+        run_dir = (
+            Path(__file__).resolve().parent
+            / "result"
+            / run_name
+        )
+        run_dir.mkdir(parents=True, exist_ok=False)
     figure_path = run_dir / "training_curves.png"
     checkpoint_path = run_dir / "checkpoint.pt"
     episode_metrics_path = run_dir / "episode_metrics.csv"
@@ -546,19 +665,6 @@ def main(argv=None):
             "incomplete rollout and are intentionally not restored.",
             flush=True,
         )
-    plotter = LiveTrainingPlotter(
-        smooth_window=20,
-        draw_every=1,
-        output_path=figure_path,
-        save_every=1,
-    )
-    display_mode = "live window + PNG" if plotter.interactive else "PNG only"
-    print(
-        f"Matplotlib backend={matplotlib.get_backend()}; mode={display_mode}; "
-        "training_curves.png is overwritten after every episode.",
-        flush=True,
-    )
-
     episode_fields = [
         "episode", "env_steps", "policy_version", "return", "mean_reward",
         "length", "outage_rate", "num_eves", "mean_raw_security_gap",
@@ -575,12 +681,64 @@ def main(argv=None):
         "entropy_coef", "satellite_early_stop", "haps_ris_early_stop",
         "satellite_stop_kl", "haps_ris_stop_kl",
     ]
-    episode_file = episode_metrics_path.open("w", newline="", encoding="utf-8")
-    update_file = update_metrics_path.open("w", newline="", encoding="utf-8")
+    episode_history = []
+    update_history = []
+    if training_args.resume_in_place:
+        episode_history, episode_discarded = _load_committed_metric_rows(
+            episode_metrics_path,
+            episode_fields,
+            "episode",
+            controller.total_episodes,
+        )
+        update_history, update_discarded = _load_committed_metric_rows(
+            update_metrics_path,
+            update_fields,
+            "update",
+            controller.update_index,
+        )
+
+    plotter = LiveTrainingPlotter(
+        smooth_window=20,
+        draw_every=1,
+        output_path=(None if training_args.resume_in_place else figure_path),
+        save_every=1,
+        interactive=(False if training_args.resume_in_place else None),
+    )
+    if training_args.resume_in_place:
+        plotter.load_history(episode_history, update_history)
+        _discard_uncommitted_metric_rows(
+            episode_metrics_path,
+            episode_fields,
+            episode_history,
+            episode_discarded,
+        )
+        _discard_uncommitted_metric_rows(
+            update_metrics_path,
+            update_fields,
+            update_history,
+            update_discarded,
+        )
+        plotter.output_path = figure_path
+        plotter.save()
+    display_mode = "live window + PNG" if plotter.interactive else "PNG only"
+    print(
+        f"Matplotlib backend={matplotlib.get_backend()}; mode={display_mode}; "
+        "training_curves.png is overwritten after every episode.",
+        flush=True,
+    )
+
+    metric_mode = "a" if training_args.resume_in_place else "w"
+    episode_file = episode_metrics_path.open(
+        metric_mode, newline="", encoding="utf-8"
+    )
+    update_file = update_metrics_path.open(
+        metric_mode, newline="", encoding="utf-8"
+    )
     episode_writer = csv.DictWriter(episode_file, fieldnames=episode_fields)
     update_writer = csv.DictWriter(update_file, fieldnames=update_fields)
-    episode_writer.writeheader()
-    update_writer.writeheader()
+    if not training_args.resume_in_place:
+        episode_writer.writeheader()
+        update_writer.writeheader()
     episode_file.flush()
     update_file.flush()
 
@@ -610,6 +768,9 @@ def main(argv=None):
             metrics = controller.update(
                 episode_callback=handle_episode
             )
+
+            update_writer.writerow({name: metrics[name] for name in update_fields})
+            update_file.flush()
 
             temporary_checkpoint = checkpoint_path.with_suffix(".tmp")
             torch.save(
@@ -643,8 +804,6 @@ def main(argv=None):
                     f"checkpoint_u{controller.update_index:04d}.pt"
                 ),
             )
-            update_writer.writerow({name: metrics[name] for name in update_fields})
-            update_file.flush()
 
             print(
                 f"update={metrics['update']:4d} "
